@@ -1,0 +1,28 @@
+{
+  "issues": [
+    {
+      "id": "c1",
+      "title": "Store notes locally so they can be edited offline",
+      "body": "Persist notes in a local store that works without a connection. Existing search must keep working.\n\nAcceptance:\n- create and edit with no network\n- search returns offline notes\n\nOut of scope: syncing.",
+      "depends_on": []
+    },
+    {
+      "id": "c2",
+      "title": "Sync local notes when the device is back online",
+      "body": "Push and pull changes when a connection is available. Retry with backoff.\n\nAcceptance:\n- a note created offline appears on the server after reconnect\n- no duplicate notes after a retry",
+      "depends_on": ["c1"]
+    },
+    {
+      "id": "c3",
+      "title": "Resolve conflicts between two edits of the same note",
+      "body": "Last write wins per field. The losing value is kept in the note's history.\n\nAcceptance:\n- two edits to different fields both survive\n- two edits to the same field keep the newer value and the older one in history",
+      "depends_on": ["c2"]
+    },
+    {
+      "id": "c4",
+      "title": "Show sync status in the toolbar",
+      "body": "Show synced, syncing, offline or conflict. Announce changes to VoiceOver users.\n\nAcceptance:\n- the status matches the sync engine state\n- the label is available to assistive technology",
+      "depends_on": ["c2"]
+    }
+  ]
+}

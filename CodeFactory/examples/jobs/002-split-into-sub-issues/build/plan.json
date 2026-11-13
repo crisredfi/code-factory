@@ -1,0 +1,5 @@
+{
+  "mode": "split",
+  "rationale": "Four parts with different reviewers and different risk. One pull request would be hard to review and hard to revert.",
+  "subtasks": []
+}

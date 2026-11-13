@@ -1,0 +1,14 @@
+{
+  "mode": "single",
+  "rationale": "One function and its tests in one module. Splitting would cost more than it saves.",
+  "subtasks": [
+    {
+      "id": "s1",
+      "specialist": "backend-engineer",
+      "goal": "Add subtract with tests for AC-1, AC-2 and AC-3",
+      "files": ["src/calculator.py", "tests/test_calculator.py"],
+      "depends_on": [],
+      "covers": ["AC-1", "AC-2", "AC-3"]
+    }
+  ]
+}

@@ -7,6 +7,7 @@ sub-issues, and an editable dashboard runs the factory.
 
 - Brief and decisions: [docs/PROMPT.md](docs/PROMPT.md)
 - States, gates and rounds: [docs/STATES.md](docs/STATES.md)
+- Worked examples of every file a job writes: [examples/](examples/README.md)
 - What the factory comments on GitHub, and how: [docs/COMMENTS.md](docs/COMMENTS.md)
 - The procedure Claude follows: [skills/code-factory/SKILL.md](skills/code-factory/SKILL.md)
 
@@ -29,7 +30,9 @@ CodeFactory/
   jobs/<job-id>/           per-job memory: state.json, issue.md, intake.md, spec.md, build.md,
                            build/plan.json, build/split.json, build/subtasks/, round-N/, logs/
   BOARD.md                 text board (generated)
+  examples/                worked job folders and example comments; tests check them against the code
   tests/test_factory.py    unit, git-gate and API tests
+  tests/test_examples.py   runs the real parsers over examples/
 ```
 
 ## Setup (once)
