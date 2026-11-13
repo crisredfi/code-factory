@@ -1,0 +1,113 @@
+{
+  "github": {
+    "repo": "",
+    "queue_label": "factory",
+    "priority_labels": {
+      "P0": "priority:P0",
+      "P1": "priority:P1",
+      "P2": "priority:P2",
+      "P3": "priority:P3"
+    },
+    "base_branch": "main",
+    "merge_method": "squash",
+    "comments": true,
+    "trusted_commenters": []
+  },
+  "max_parallel_jobs": 2,
+  "max_parallel_subtasks": 3,
+  "max_rounds": 3,
+  "target_repo": "",
+  "worktree_dir": ".worktrees",
+  "checks_command": "factory/checks.sh",
+  "checks_timeout_s": 1800,
+  "protected_paths": [
+    "factory/checks.sh",
+    "factory/config.json"
+  ],
+  "runner": {
+    "command": "claude",
+    "extra_args": [
+      "--permission-mode",
+      "acceptEdits"
+    ]
+  },
+  "stages": {
+    "intake": {
+      "agent": "intake",
+      "model": "claude-sonnet-5-5"
+    },
+    "spec": {
+      "agent": "spec-writer",
+      "model": "claude-opus-5-5"
+    },
+    "build": {
+      "agent": "builder",
+      "model": "claude-opus-5-5"
+    }
+  },
+  "reviewers": {
+    "defaults": [
+      "architecture",
+      "code",
+      "security"
+    ],
+    "always": [
+      "code"
+    ],
+    "optional_review_labels": {
+      "ui": "factory:ui-review",
+      "ux": "factory:ux-review"
+    },
+    "catalog": {
+      "architecture": {
+        "agent": "reviewer-architecture",
+        "model": "claude-sonnet-5-5",
+        "description": "Module boundaries, conventions, reversibility"
+      },
+      "code": {
+        "agent": "reviewer-code",
+        "model": "claude-sonnet-5-5",
+        "description": "Correctness, tests quality, readability, platform idioms"
+      },
+      "security": {
+        "agent": "reviewer-security",
+        "model": "claude-opus-5-5",
+        "description": "AuthN/AuthZ, input handling, secrets, data protection"
+      },
+      "ui": {
+        "agent": "reviewer-ui",
+        "model": "claude-sonnet-5-5",
+        "description": "Visual fidelity, layout, states, accessibility (on request)"
+      },
+      "ux": {
+        "agent": "reviewer-ux",
+        "model": "claude-sonnet-5-5",
+        "description": "Flows, copy, friction, feedback (on request)"
+      }
+    }
+  },
+  "agents": {
+    "catalog": {
+      "ios-engineer": {
+        "model": "claude-sonnet-5-5",
+        "description": "Swift / SwiftUI code under the project's platform norms"
+      },
+      "backend-engineer": {
+        "model": "claude-sonnet-5-5",
+        "description": "APIs, services, jobs, data access"
+      },
+      "os-engineer": {
+        "model": "claude-sonnet-5-5",
+        "description": "Scripts, CI, tooling, daemons, file-system and process code"
+      },
+      "test-engineer": {
+        "model": "claude-sonnet-5-5",
+        "description": "Test scaffolding, fixtures, coverage of acceptance criteria"
+      }
+    }
+  },
+  "auto_merge": {
+    "enabled": false,
+    "max_risk": "LOW"
+  }
+}

@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Runtime state of a factory run (generated, local to the machine)
+CodeFactory/jobs/*
+!CodeFactory/jobs/.gitkeep
+CodeFactory/queue/queue.json
+CodeFactory/BOARD.md
+CodeFactory/.worktrees/
+**/.worktrees/
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs and locks
+*.log
+*.lock
+.lock

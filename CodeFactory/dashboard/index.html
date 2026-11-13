@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeFactory</title>
+<style>
+  :root {
+    --bg: #14151b; --panel: #1a1c24; --card: #20222c; --card-hover: #252835; --line: #2b2e3b;
+    --text: #e4e5ea; --muted: #868ba0; --faint: #5b6075; --active: #8be9fd; --pass: #50fa7b;
+    --changes: #ffb86c; --human: #ff5555; --merged: #bd93f9;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f5f6f8; --panel: #ffffff; --card: #ffffff; --card-hover: #f0f2f6; --line: #dde1ea;
+      --text: #1d2030; --muted: #5d6378; --faint: #9aa0b4; --active: #0b7a95; --pass: #1e8e3e;
+      --changes: #b35c00; --human: #c62828; --merged: #6a3fb5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, "Segoe UI", sans-serif; }
+  button, select, input { font: inherit; color: inherit; }
+  button { cursor: pointer; background: var(--card); border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; font-size: 12px; }
+  button:hover { background: var(--card-hover); }
+  button.primary { border-color: var(--active); color: var(--active); }
+  button.danger { border-color: var(--human); color: var(--human); }
+  button:disabled { opacity: .4; cursor: default; }
+  select, input[type=text], input[type=number] { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font-size: 12px; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--muted); } .faint { color: var(--faint); }
+
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 16px; margin: 0 16px 0 0; }
+  .cap { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .spacer { flex: 1; }
+  #search { width: 180px; }
+
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 0; min-height: calc(100vh - 60px); }
+  aside.queue { border-right: 1px solid var(--line); padding: 14px; background: var(--panel); overflow-y: auto; max-height: calc(100vh - 60px); position: sticky; top: 60px; }
+  aside h2, .colhead h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+  .qrow { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; background: var(--card); }
+  .qrow .t { font-size: 12.5px; line-height: 1.3; }
+  .qrow .arrows { display: flex; flex-direction: column; gap: 2px; grid-row: span 2; }
+  .qrow .arrows button { padding: 0 6px; line-height: 1.1; }
+
+  main { padding: 16px 18px 40px; overflow-x: auto; }
+  .board { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; align-items: start; }
+  .col { min-width: 0; }
+  .colhead { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 10px; }
+  .colhead h2 { margin: 0; }
+  .colhead .n { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .col.human .colhead h2 { color: var(--human); }
+  .col.empty { opacity: .45; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; margin-bottom: 10px; }
+  .card.live { border-color: color-mix(in srgb, var(--active) 45%, var(--line)); }
+  .card.human { border-color: var(--human); }
+  .card .top { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .card .title { font-size: 13px; line-height: 1.3; margin: 2px 0 6px; cursor: pointer; }
+  .card .title:hover { text-decoration: underline; }
+  .badge { font-family: var(--mono); font-size: 10px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.P0 { color: var(--human); border-color: var(--human); } .badge.P1 { color: var(--changes); border-color: var(--changes); }
+  .badge.risk-HIGH { color: var(--human); } .badge.risk-MEDIUM { color: var(--changes); } .badge.risk-LOW { color: var(--pass); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+  .chip { font-family: var(--mono); font-size: 10.5px; padding: 2px 6px; border-radius: 5px; border: 1px dashed var(--faint); color: var(--faint); cursor: pointer; user-select: none; }
+  .chip.on { border: 1px solid var(--active); color: var(--active); background: color-mix(in srgb, var(--active) 12%, transparent); }
+  .chip.on.locked { cursor: default; }
+  .chip.PASS { border: 1px solid var(--pass); color: var(--pass); }
+  .chip.CHANGES { border: 1px solid var(--changes); color: var(--changes); }
+  .chip.BLOCK { border: 1px solid var(--human); color: var(--human); }
+  .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .hint { font-size: 11.5px; color: var(--changes); margin-top: 6px; }
+  .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--active); animation: p 1.6s infinite; }
+  @keyframes p { 50% { opacity: .25; } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+  a { color: var(--active); }
+
+  .scrim { position: fixed; inset: 0; background: rgba(5,6,10,.5); display: none; z-index: 10; }
+  .scrim.open { display: block; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(960px, 100vw); background: var(--panel); border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .2s; z-index: 11; display: grid; grid-template-rows: auto 1fr; }
+  .drawer.open { transform: none; }
+  .dhead { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: flex-start; }
+  .dhead h3 { margin: 0 0 4px; font-size: 15px; }
+  .dhead .x { margin-left: auto; }
+  .dbody { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
+  .flist { border-right: 1px solid var(--line); padding: 10px; overflow-y: auto; }
+  .flist button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 4px 6px; font-family: var(--mono); font-size: 11.5px; color: var(--muted); border-radius: 5px; }
+  .flist button.on, .flist button:hover { background: var(--card); color: var(--text); }
+  .fview { overflow: auto; padding: 14px 18px 40px; }
+  .fview pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.55 var(--mono); margin: 0; }
+
+  .modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(520px, 94vw); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; z-index: 12; display: none; max-height: 86vh; overflow-y: auto; }
+  .modal.open { display: block; }
+  .modal h3 { margin: 0 0 12px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; font-size: 13px; display: none; z-index: 20; max-width: 90vw; }
+  .toast.show { display: block; }
+  .toast.err { border-color: var(--human); color: var(--human); }
+  .empty { color: var(--faint); font-size: 12px; padding: 6px 2px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside.queue { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); } .dbody { grid-template-columns: 1fr; } .flist { border-right: 0; border-bottom: 1px solid var(--line); display: flex; overflow-x: auto; } .flist button { width: auto; white-space: nowrap; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>CodeFactory</h1>
+  <span class="cap" id="cap">connecting…</span>
+  <span class="spacer"></span>
+  <input type="text" id="search" placeholder="filter jobs…">
+  <select id="prio-filter"><option value="">all priorities</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select>
+  <button id="btn-sync">Sync issues</button>
+  <button id="btn-tick" class="primary">Tick</button>
+  <button id="btn-settings">Settings</button>
+</header>
+
+<div class="layout">
+  <aside class="queue">
+    <h2>Queue · <span id="qcount">0</span></h2>
+    <div id="queue"></div>
+  </aside>
+  <main>
+    <div class="board" id="board"></div>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<section class="drawer" id="drawer" role="dialog" aria-modal="true">
+  <div class="dhead">
+    <div style="min-width:0">
+      <div class="mono muted" id="d-id"></div>
+      <h3 id="d-title"></h3>
+      <div class="mono" id="d-meta"></div>
+    </div>
+    <button class="x" id="d-close">Close</button>
+  </div>
+  <div class="dbody">
+    <nav class="flist" id="d-files"></nav>
+    <div class="fview"><pre id="d-text">Select a file.</pre></div>
+  </div>
+</section>
+
+<section class="modal" id="settings" role="dialog" aria-modal="true">
+  <h3>Settings</h3>
+  <div class="row"><span>Max parallel jobs</span><input type="number" id="s-max-jobs" min="1" style="width:80px"></div>
+  <div class="row"><span>Max parallel subtasks</span><input type="number" id="s-max-sub" min="1" style="width:80px"></div>
+  <div class="row"><span>Rounds per job before a human is asked</span><input type="number" id="s-max-rounds" min="1" style="width:80px"></div>
+  <div class="row"><span>Default reviewers (applied to new jobs)</span><div id="s-reviewers"></div></div>
+  <div class="row"><span>Auto-merge when all reviews pass</span><select id="s-auto"><option value="false">off (a human merges)</option><option value="true">on</option></select></div>
+  <div class="row"><span>Auto-merge up to risk</span><select id="s-risk"><option>LOW</option><option>MEDIUM</option></select></div>
+  <p class="muted" style="font-size:12px">Changes are written to factory.config.json. Reviewers the intake adds still apply on top of these defaults.</p>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><button id="s-cancel">Cancel</button><button class="primary" id="s-save">Save</button></div>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+const PRIOS = ['P0', 'P1', 'P2', 'P3']
+const LIVE = new Set(['INTAKE', 'SPEC', 'BUILD', 'REVIEW'])
+const HUMAN = new Set(['NEEDS_HUMAN', 'NEEDS_INFO', 'SPLIT_REVIEW'])
+const MOVES = ['QUEUED', 'INTAKE', 'SPEC', 'BUILD', 'REVIEW', 'NEEDS_HUMAN', 'MERGE_PENDING', 'COMPLETE', 'REJECTED']
+let state = null
+let lastHash = ''
+let openJob = null
+let openFile = null
+let fileTimer = null
+
+function toast(msg, isErr = false) {
+  const t = $('toast'); t.textContent = msg; t.className = 'toast show' + (isErr ? ' err' : '')
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.className = 'toast'), 3500)
+}
+
+async function api(method, path, body) {
+  const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  return data
+}
+
+async function act(path, body, confirmText) {
+  if (confirmText && !confirm(confirmText)) return
+  try { const r = await api('POST', path, body || {}); toast(r.message || 'done'); load() }
+  catch (e) { toast(e.message, true) }
+}
+
+async function load() {
+  try {
+    const s = await api('GET', '/api/state')
+    s.catalog_reviewers_list = Object.keys(s.catalog.reviewers)
+    const h = JSON.stringify(s)
+    state = s
+    $('cap').textContent = `${s.capacity.active}/${s.capacity.max} active · ${s.jobs.length} jobs · ${new Date().toLocaleTimeString()}`
+    if (h !== lastHash) { lastHash = h; render() }
+    if (openJob) renderDrawerHead()
+  } catch (e) { $('cap').textContent = 'offline: ' + e.message }
+}
+
+function filtered() {
+  const q = $('search').value.trim().toLowerCase()
+  const p = $('prio-filter').value
+  return state.jobs.filter((j) => (!q || `${j.job_id} ${j.title}`.toLowerCase().includes(q)) && (!p || j.priority === p))
+}
+
+function renderQueue() {
+  const queued = state.jobs.filter((j) => j.state === 'QUEUED')
+    .sort((a, b) => PRIOS.indexOf(a.priority) - PRIOS.indexOf(b.priority) || a.queue_pos - b.queue_pos)
+  $('qcount').textContent = queued.length
+  $('queue').innerHTML = queued.map((j, i) => `
+    <div class="qrow">
+      <div class="t"><span class="badge ${j.priority}">${j.priority}</span> <span class="mono muted">#${j.issue}</span><br>${esc(j.title)}</div>
+      <div class="arrows">
+        <button data-move="up" data-job="${j.job_id}" ${i === 0 ? 'disabled' : ''} title="move up">▲</button>
+        <button data-move="down" data-job="${j.job_id}" ${i === queued.length - 1 ? 'disabled' : ''} title="move down">▼</button>
+      </div>
+      <div><select data-prio="${j.job_id}">${PRIOS.map((p) => `<option ${p === j.priority ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
+    </div>`).join('') || '<div class="empty">Queue is empty. Label an issue `factory` and press Sync.</div>'
+}
+
+function chips(j) {
+  return state.catalog_reviewers_list.map((r) => {
+    const on = j.reviewers.includes(r)
+    const locked = state.config.reviewers_always.includes(r)
+    return `<span class="chip ${on ? 'on' : ''} ${locked ? 'locked' : ''}" data-rev="${j.job_id}" data-name="${r}" title="${locked ? 'always runs' : 'click to toggle for this job'}">${r}</span>`
+  }).join('')
+}
+
+function actionsFor(j) {
+  const b = []
+  const id = j.job_id
+  if (LIVE.has(j.state)) b.push(`<button data-step="${id}" class="primary">Step now</button>`)
+  if (j.state === 'SPLIT_REVIEW') b.push(`<button data-split="approve" data-job="${id}" class="primary">Create sub-issues</button>`, `<button data-split="cancel" data-job="${id}">Cancel split</button>`)
+  if (j.state === 'MERGE_PENDING') b.push(`<button data-merge="${id}" class="primary">Merge PR</button>`)
+  if (j.state === 'NEEDS_HUMAN') b.push(`<button data-feedback="${id}">Send feedback</button>`)
+  if (['NEEDS_HUMAN', 'NEEDS_INFO', 'SPLIT_REVIEW', 'MERGE_PENDING'].includes(j.state)) b.push(`<button data-reject="${id}" class="danger">Reject</button>`)
+  b.push(`<select data-set="${id}"><option value="">move to…</option>${MOVES.filter((m) => m !== j.state).map((m) => `<option>${m}</option>`).join('')}</select>`)
+  return b.join('')
+}
+
+function card(j) {
+  const answer = j.state === 'NEEDS_INFO'
+    ? (j.answered ? 'author replied: resumes on next sync or tick' : 'waiting for the author on the issue')
+    : j.resumed_by_answer && j.state === 'INTAKE' ? 'resumed after the author answered' : ''
+  const stateFlag = j.state === 'NEEDS_HUMAN' ? 'your call' : j.state === 'SPLIT_REVIEW' ? 'review drafts' : j.state === 'MERGE_PENDING' ? 'ready to merge' : ''
+  const flag = [stateFlag, answer].filter(Boolean).join(' · ')
+  const hint = j.state === 'NEEDS_HUMAN' ? 'Needs a human: see the files, then send feedback, merge or reject.' : ''
+  return `
+  <article class="card ${LIVE.has(j.state) ? 'live' : ''} ${j.state === 'NEEDS_HUMAN' ? 'human' : ''}">
+    <div class="top">${LIVE.has(j.state) ? '<span class="pulse"></span>' : ''}<span class="mono muted">${esc(j.job_id)}</span>
+      <span class="badge ${j.priority}">${j.priority}</span>${j.risk ? `<span class="badge risk-${j.risk}">${j.risk}</span>` : ''}
+      ${j.parent ? `<span class="badge">sub of #${j.parent}</span>` : ''}</div>
+    <div class="title" data-open="${j.job_id}">${esc(j.title)}</div>
+    <div class="chips">${chips(j)}</div>
+    <div class="meta">
+      <span>${esc(j.state)}</span>${j.round ? `<span>round ${j.round}/${j.round_limit}</span>` : ''}
+      ${j.gate ? `<span>gate ${esc(j.gate)}</span>` : ''}
+      ${j.pr_url ? `<a href="${esc(j.pr_url)}" target="_blank" rel="noopener">PR</a>` : ''}
+      ${j.children?.length ? `<span>${j.children.length} sub-issues</span>` : ''}
+      ${j.blocked_by?.length && j.state === 'QUEUED' ? `<span>waits for #${j.blocked_by.join(', #')}</span>` : ''}
+    </div>
+    ${flag ? `<div class="hint">${flag}</div>` : ''}${hint ? `<div class="hint">${hint}</div>` : ''}
+    <div class="actions">${actionsFor(j)}</div>
+  </article>`
+}
+
+function render() {
+  renderQueue()
+  const jobs = filtered()
+  $('board').innerHTML = state.columns.map((c) => {
+    const rows = jobs.filter((j) => j.state === c)
+    if (!rows.length && ['REJECTED', 'FAILED', 'WAITING_CHILDREN', 'SPLIT_REVIEW'].includes(c)) return ''
+    return `<section class="col ${HUMAN.has(c) ? 'human' : ''} ${rows.length ? '' : 'empty'}">
+      <div class="colhead"><h2>${c.replace('_', ' ')}</h2><span class="n">${rows.length}</span></div>
+      ${rows.map(card).join('') || '<div class="empty">—</div>'}
+    </section>`
+  }).join('')
+}
+
+// ---- drawer
+
+function renderDrawerHead() {
+  const j = state.jobs.find((x) => x.job_id === openJob)
+  if (!j) return closeDrawer()
+  $('d-id').textContent = `${j.job_id} · ${j.state}${j.round ? ' · round ' + j.round : ''}`
+  $('d-title').textContent = j.title
+  $('d-meta').innerHTML = [j.url && `<a href="${esc(j.url)}" target="_blank">issue #${j.issue}</a>`, j.pr_url && `<a href="${esc(j.pr_url)}" target="_blank">PR</a>`, `reviewers: ${esc(j.reviewers.join(', '))}`].filter(Boolean).join(' · ')
+}
+
+async function openDrawer(id) {
+  openJob = id; openFile = null
+  $('drawer').classList.add('open'); $('scrim').classList.add('open')
+  renderDrawerHead()
+  await loadFiles()
+}
+
+function closeDrawer() {
+  openJob = null; openFile = null
+  $('drawer').classList.remove('open'); $('scrim').classList.remove('open')
+}
+
+async function loadFiles() {
+  if (!openJob) return
+  const { files } = await api('GET', `/api/job/${openJob}/files`)
+  if (!openFile || !files.includes(openFile)) openFile = files.find((f) => f === 'issue.md') || files[0] || null
+  $('d-files').innerHTML = files.map((f) => `<button data-file="${esc(f)}" class="${f === openFile ? 'on' : ''}">${esc(f)}</button>`).join('') || '<div class="empty">No files yet.</div>'
+  await showFile()
+}
+
+async function showFile() {
+  if (!openJob || !openFile) { $('d-text').textContent = 'No file selected.'; return }
+  try {
+    const { text } = await api('GET', `/api/job/${openJob}/file?path=${encodeURIComponent(openFile)}`)
+    $('d-text').textContent = text
+  } catch (e) { $('d-text').textContent = e.message }
+}
+
+// ---- settings
+
+function openSettings() {
+  const c = state.config
+  $('s-max-jobs').value = c.max_parallel_jobs
+  $('s-max-sub').value = c.max_parallel_subtasks
+  $('s-max-rounds').value = c.max_rounds
+  $('s-auto').value = String(c.auto_merge.enabled)
+  $('s-risk').value = c.auto_merge.max_risk
+  $('s-reviewers').innerHTML = state.catalog_reviewers_list.map((r) =>
+    `<label style="margin-right:8px"><input type="checkbox" value="${r}" ${c.reviewers_defaults.includes(r) ? 'checked' : ''}> ${r}</label>`).join('')
+  $('settings').classList.add('open'); $('scrim').classList.add('open')
+}
+
+async function saveSettings() {
+  const patch = {
+    max_parallel_jobs: Number($('s-max-jobs').value), max_parallel_subtasks: Number($('s-max-sub').value),
+    max_rounds: Number($('s-max-rounds').value), 'auto_merge.enabled': $('s-auto').value === 'true',
+    'auto_merge.max_risk': $('s-risk').value,
+    'reviewers.defaults': [...$('s-reviewers').querySelectorAll('input:checked')].map((i) => i.value),
+  }
+  try {
+    for (const [k, v] of Object.entries(patch)) await api('POST', '/api/config', { [k]: v })
+    toast('settings saved'); $('settings').classList.remove('open'); $('scrim').classList.remove('open'); load()
+  } catch (e) { toast(e.message, true) }
+}
+
+// ---- events
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('button, .chip, [data-open], [data-file]')
+  const el = e.target
+  if (el.id === 'scrim') { closeDrawer(); $('settings').classList.remove('open'); $('scrim').classList.remove('open'); return }
+  if (!t) return
+  if (t.dataset.open) return openDrawer(t.dataset.open)
+  if (t.dataset.file) { openFile = t.dataset.file; return loadFiles() }
+  if (t.dataset.move) return act('/api/move', { job: t.dataset.job, direction: t.dataset.move })
+  if (t.dataset.rev !== undefined) {
+    const j = state.jobs.find((x) => x.job_id === t.dataset.rev)
+    if (state.config.reviewers_always.includes(t.dataset.name)) return toast(`${t.dataset.name} always runs`, true)
+    const names = j.reviewers.includes(t.dataset.name) ? j.reviewers.filter((n) => n !== t.dataset.name) : [...j.reviewers, t.dataset.name]
+    return act(`/api/job/${j.job_id}/reviewers`, { names })
+  }
+  if (t.dataset.step) return act(`/api/job/${t.dataset.step}/step`, {}, 'Run the agents for this job now?')
+  if (t.dataset.split) return act(`/api/job/${t.dataset.job}/split`, { decision: t.dataset.split },
+    t.dataset.split === 'approve' ? 'Create the drafted sub-issues on GitHub now? They will be labelled factory and queued.' : 'Cancel the split? The job goes to needs-human.')
+  if (t.dataset.merge) return act(`/api/job/${t.dataset.merge}/merge`, {}, 'Squash-merge this PR now?')
+  if (t.dataset.feedback) {
+    const text = prompt('Feedback for the builder (a new round starts):')
+    if (text) act(`/api/job/${t.dataset.feedback}/feedback`, { text })
+    return
+  }
+  if (t.dataset.reject) {
+    const reason = prompt('Reason for rejecting (posted to the PR or left in the job folder):')
+    if (reason) act(`/api/job/${t.dataset.reject}/reject`, { reason })
+    return
+  }
+})
+document.addEventListener('change', (e) => {
+  const t = e.target
+  if (t.dataset.prio) return act(`/api/job/${t.dataset.prio}/priority`, { priority: t.value })
+  if (t.dataset.set && t.value) return act(`/api/job/${t.dataset.set}/set`, { state: t.value, note: 'moved from dashboard' }, `Move ${t.dataset.set} to ${t.value} by hand?`)
+})
+$('btn-sync').onclick = () => act('/api/sync', {})
+$('btn-tick').onclick = () => act('/api/tick', {}, 'Start a tick: reconcile, start queued jobs and step every active job?')
+$('btn-settings').onclick = openSettings
+$('s-cancel').onclick = () => { $('settings').classList.remove('open'); $('scrim').classList.remove('open') }
+$('s-save').onclick = saveSettings
+$('d-close').onclick = closeDrawer
+$('search').oninput = render
+$('prio-filter').onchange = render
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); $('settings').classList.remove('open'); $('scrim').classList.remove('open') } })
+
+load()
+setInterval(load, 3000)
+</script>
+</body>
+</html>
