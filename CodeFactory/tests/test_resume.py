@@ -176,5 +176,16 @@ class BlockedRouting(Base):
         self.assertFalse(decide.is_environment_block("AppTests/Foo.swift line 12 unterminated raw string"))
 
 
+class HoldRelease(Base):
+    def test_only_queued_jobs_can_be_held_and_release_returns_them(self):
+        from cf import lifecycle, model
+        self.assertIn("HELD", model.COLUMNS)
+        self.assertEqual(model.TRANSITIONS["QUEUED"] & {"HELD"}, {"HELD"})
+        self.assertEqual(model.TRANSITIONS["HELD"], {"QUEUED"})
+        st = {"job_id": "issue-1", "state": "BUILD"}
+        with self.assertRaises(Exception):
+            lifecycle.hold_job(st, True)
+
+
 if __name__ == "__main__":
     unittest.main()
