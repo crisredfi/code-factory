@@ -116,11 +116,13 @@ class QueueTests(Base):
                    issue(2, "p0", ["factory", "priority:P0"]),
                    issue(3, "p2", ["factory"]),
                    issue(4, "child", ["factory"], body="Parent: #9\nDepends on: #1\n")])
-        queue.next_jobs(self.cfg_now())
+        cfg = self.cfg_now()
+        cfg["max_parallel_jobs"] = 2  # fixed here: the test must not depend on the machine's own setting
+        queue.next_jobs(cfg)
         self.assertEqual(state.load_state("issue-2")["state"], "INTAKE")
         self.assertEqual(state.load_state("issue-3")["state"], "INTAKE")
         self.assertEqual(state.load_state("issue-1")["state"], "QUEUED")
-        self.assertIn("capacity full", queue.next_jobs(self.cfg_now())[0])
+        self.assertIn("capacity full", queue.next_jobs(cfg)[0])
 
     def test_move_swaps_and_adopts_priority(self):
         self.sync([issue(1, "a", ["factory", "priority:P1"]), issue(2, "b", ["factory", "priority:P2"])])
@@ -213,6 +215,26 @@ class FullFlow(Base):
         with self.assertRaises(util.FactoryError):
             steps.apply("issue-7", self.cfg_now())
 
+    def _plan_with_spec(self, spec: str, plan: dict):
+        self.write("issue-7", "intake.md", "DECISION: ACCEPT\nRISK: LOW\nSCOPE: small\n")
+        steps.apply("issue-7", self.cfg_now())
+        self.write("issue-7", "spec.md", spec)
+        steps.apply("issue-7", self.cfg_now())
+        self.write("issue-7", "build/plan.json", json.dumps(plan))
+        return steps.apply("issue-7", self.cfg_now())
+
+    def test_plan_that_drops_a_criterion_is_refused(self):
+        with self.assertRaises(util.FactoryError) as ctx:
+            self._plan_with_spec("- [ ] AC-1: a\n- [ ] AC-2: b\n", {"mode": "single", "subtasks": [
+                {"id": "s1", "specialist": "ios-engineer", "depends_on": [], "covers": ["AC-1"]}]})
+        self.assertIn("AC-2", str(ctx.exception))
+
+    def test_criterion_listed_as_unassigned_is_accepted(self):
+        to, _ = self._plan_with_spec("- [ ] AC-1: a\n- [ ] AC-2: b\n", {"mode": "single", "subtasks": [
+            {"id": "s1", "specialist": "ios-engineer", "depends_on": [], "covers": ["AC-1"]}],
+            "unassigned": [{"criterion": "AC-2", "why": "no specialist fits"}]})
+        self.assertEqual(to, "BUILD")
+
     def test_split_goes_to_review_and_approve_dry_run_lists_issues(self):
         self.write("issue-7", "intake.md", "DECISION: ACCEPT\nRISK: LOW\nSCOPE: large\n")
         steps.apply("issue-7", self.cfg_now())
@@ -235,7 +257,7 @@ class FullFlow(Base):
         self.write("issue-7", "spec.md", "- [ ] AC-1: x\n")
         steps.apply("issue-7", self.cfg_now())
         self.write("issue-7", "build/plan.json", json.dumps({"mode": "single", "subtasks": [
-            {"id": "s1", "specialist": "backend-engineer", "depends_on": []}]}))
+            {"id": "s1", "specialist": "backend-engineer", "depends_on": [], "covers": ["AC-1"]}]}))
         steps.apply("issue-7", self.cfg_now())  # plan accepted -> subtasks
         self.assertEqual(state.load_state("issue-7")["phase"], "subtasks")
         self.commit_in_worktree("issue-7")

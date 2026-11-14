@@ -208,8 +208,25 @@ class LocalLoading(Env):
                                          "loaded": ["qwen3.6-35b-a3b-splash"]})
         self.lm().ensure_loaded("qwen3.8-27b-splash")
         calls = [c for c in self.lms_calls() if c.startswith(("load", "unload"))]
-        self.assertEqual(calls, ["unload qwen3.6-35b-a3b-splash", "load qwen3.8-27b-splash -y"])
+        self.assertEqual(calls, ["unload qwen3.6-35b-a3b-splash", "load qwen3.8-27b-splash -y -c 262144"])
         self.assertEqual(self.lms_loaded(), ["qwen3.8-27b-splash"])
+
+    def test_load_passes_no_context_flag_when_unset(self):
+        self.cfg["models"]["local"].pop("context_length", None)
+        self.lm().ensure_loaded("qwen3.6-35b-a3b-splash")
+        self.assertIn("load qwen3.6-35b-a3b-splash -y", self.lms_calls())
+
+    def test_local_child_gets_the_compaction_window_and_cloud_does_not(self):
+        self.cfg["models"]["local"]["auto_compact_window"] = 200000
+        shell = {"ANTHROPIC_API_KEY": "sk-test", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "999"}
+        env = models.LMStudio(self.cfg).child_env(shell)
+        self.assertEqual(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "200000")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+    def test_no_compaction_window_is_set_when_unconfigured(self):
+        self.cfg["models"]["local"].pop("auto_compact_window", None)
+        env = models.LMStudio(self.cfg).child_env({"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "999"})
+        self.assertNotIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW", env)
 
     def test_leaves_others_loaded_when_unload_others_is_off(self):
         util.write_json(self.lms_state, {"installed": ["qwen3.6-35b-a3b-splash", "qwen3.8-27b-splash"],

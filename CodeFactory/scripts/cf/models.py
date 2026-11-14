@@ -27,6 +27,7 @@ from . import paths, util
 from .util import FactoryError
 
 LOCAL_PREFIX = "local:"
+COMPACT_ENV = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"  # read by Claude Code; set only for local children
 STAGES = ["intake", "spec", "build", "specialists", "review"]  # review.<reviewer> is also allowed
 
 
@@ -126,6 +127,10 @@ class LMStudio:
         self.base = c["base_url"].rstrip("/")
         self.token = c.get("auth_token", "lmstudio")
         self.unload_others = c.get("unload_others", True)
+        # Context length the model is loaded with (`lms load -c`). Unset: LM Studio's default.
+        self.context_length = c.get("context_length")
+        # Claude Code compacts the conversation when it reaches this many tokens. Local children only.
+        self.auto_compact_window = c.get("auto_compact_window")
 
     def _lms(self, *args: str, timeout: int = 120) -> str:
         if not shutil.which(self.cmd):
@@ -163,7 +168,10 @@ class LMStudio:
         if self.unload_others:
             for m in loaded:
                 self._lms("unload", m.get("identifier") or m["modelKey"])
-        self._lms("load", key, "-y", timeout=1800)
+        load = ["load", key, "-y"]
+        if self.context_length:
+            load += ["-c", str(self.context_length)]
+        self._lms(*load, timeout=1800)
         if not any(key in (m.get("modelKey"), m.get("identifier")) for m in self.loaded()):
             raise FactoryError(f"LM Studio did not report {key} as loaded after `load`")
         unloaded = [m.get("identifier") or m["modelKey"] for m in loaded] if self.unload_others else []
@@ -183,8 +191,11 @@ class LMStudio:
         so it is never sent to the local server. The master session's own environment is not changed."""
         env = dict(base_env)
         env.pop("ANTHROPIC_API_KEY", None)
+        env.pop(COMPACT_ENV, None)
         env["ANTHROPIC_BASE_URL"] = self.base
         env["ANTHROPIC_AUTH_TOKEN"] = self.token
+        if self.auto_compact_window:
+            env[COMPACT_ENV] = str(self.auto_compact_window)
         return env
 
 

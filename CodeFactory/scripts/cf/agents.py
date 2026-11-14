@@ -74,7 +74,10 @@ def _run_stage_once(job_id: str, it: dict, spec: str, prompt: str, cwd, log: Pat
     """One attempt. A local model is loaded (and the LM Studio lock held) before its agent runs."""
     watch = {"worktree": cwd and str(cwd), "job_dir": state.job_dir(job_id)}
     if dry or not models.is_local(spec):
-        return run_agent(prompt, spec, cwd, log, cfg, dry, watch=watch, job_dir=watch["job_dir"])
+        # Claude runs never get the local compaction window, even if the shell exports it.
+        cloud_env = dict(os.environ)
+        cloud_env.pop(models.COMPACT_ENV, None)
+        return run_agent(prompt, spec, cwd, log, cfg, dry, env=cloud_env, watch=watch, job_dir=watch["job_dir"])
     with models.local_turn(cfg, spec, log=lambda msg: out(f"  {it['tag']}: {msg}")) as lm:
         watch |= {"local": True, "local_up": lm.healthy}
         return run_agent(prompt, models.local_key(spec), cwd, log, cfg, dry,
@@ -125,6 +128,17 @@ def execute(job_id: str, items: list[dict], cfg: dict, dry: bool, out=print) -> 
             out(f"  {tag}: {res}")
 
 
+def catalog_block(cfg: dict) -> str:
+    """The specialists the build lead may deploy, with the signals that route work to each one.
+    Injected into the plan prompt so the model never has to guess a name."""
+    lines = ["Specialist catalog (the only names you may use in plan.json):"]
+    for name, spec in cfg["agents"]["catalog"].items():
+        lines.append(f"- {name}: {spec['description']}")
+        if spec.get("use_when"):
+            lines.append(f"  use when: {spec['use_when']}")
+    return "\n".join(lines)
+
+
 def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list[dict]:
     """Agent items for one stage key: intake | spec | build | review.<name>."""
     if key.startswith("review."):
@@ -136,9 +150,10 @@ def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list
     stage = cfg["stages"][key]
     if key == "build":
         notes = {
-            "plan": ("Phase: plan. Decide the mode (single | subtasks | split) and pick specialists only from "
-                     "the catalog in your prompt. Write build/plan.json. For mode split, also write build/split.json "
-                     "and set build.md to STATUS: SPLIT."),
+            "plan": ("Phase: plan. Detect the layer of each acceptance criterion, decide the mode "
+                     "(single | subtasks | split), and pick specialists only from the catalog below. Write "
+                     "build/plan.json. For mode split, also write build/split.json and set build.md to "
+                     "STATUS: SPLIT.\n\n" + catalog_block(cfg)),
             "integrate": ("Phase: integrate. Read build/subtasks/*.md, finish the work, commit, push, make sure the "
                           "draft PR exists, and write build.md with STATUS: READY or BLOCKED."),
             "revise": (f"Phase: revise. Read round-{st['round'] - 1}/checks.md and any review-*.md there and fix "

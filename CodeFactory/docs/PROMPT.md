@@ -25,7 +25,7 @@ INTAKE       intake agent        → intake.md   (DECISION: ACCEPT | NEEDS-INFO 
    ▼                                      └─ REJECT     → REJECTED
 SPEC         spec-writer agent   → spec.md     (testable `- [ ]` acceptance criteria)
    ▼
-BUILD        builder agent       → build.md    (plan → subtasks → integrate; TDD; draft PR)
+BUILD        factory-builder     → build.md    (plan → subtasks → integrate; TDD; draft PR)
    │  └─ specialists run the subtasks in waves (iOS / backend / OS / test engineers …)
    ▼
 REVIEW       reviewer-architecture, reviewer-code, reviewer-security   (+ ui, ux only when requested)
