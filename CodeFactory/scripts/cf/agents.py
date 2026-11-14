@@ -27,6 +27,7 @@ def build_prompt(st: dict, cfg: dict, agent: str, output_rel: str, extra: str = 
     files = [f for f in ["issue.md", "intake.md", "spec.md", "build.md", "build/plan.json", "build/split.json"]
              if (jd / f).exists()]
     files += [p.name for p in sorted(jd.glob("intake-*.md"))]
+    files += [p.name for p in sorted(jd.glob("feedback-*.md"))]  # human feedback sent from NEEDS_HUMAN
     if st.get("round"):
         for n in sorted({st["round"], st["round"] - 1}):
             d = jd / f"round-{n}"

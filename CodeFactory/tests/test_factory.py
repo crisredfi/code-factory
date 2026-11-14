@@ -579,6 +579,26 @@ class Dashboard(Base):
             self.assertIn(needle, html)
 
 
+class FeedbackReachesTheBuilder(unittest.TestCase):
+    """Regression: feedback-*.md was written by `feedback` but never listed in the builder's prompt."""
+
+    def test_feedback_file_is_listed_for_the_agent(self):
+        import tempfile
+        from cf import agents, state
+        with tempfile.TemporaryDirectory() as tmp:
+            jd = Path(tmp) / "job"
+            jd.mkdir()
+            (jd / "feedback-1.md").write_text("# Feedback 1\n\nfix the compile error\n")
+            saved = state.job_dir
+            state.job_dir = lambda job_id: jd
+            try:
+                st = {"job_id": "x", "branch": "b", "worktree": None, "issue": 1, "round": 2, "round_limit": 4}
+                prompt = agents.build_prompt(st, config.load(), "factory-builder", "build.md")
+            finally:
+                state.job_dir = saved
+        self.assertIn("feedback-1.md", prompt)
+
+
 class GithubRepoIsPassed(unittest.TestCase):
     """Regression: comments and issues went to the factory's own repo because -R was missing."""
 
