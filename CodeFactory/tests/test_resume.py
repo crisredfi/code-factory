@@ -94,8 +94,8 @@ class BuilderInstructions(Base):
                 st["phase"] = phase
                 extra = agents.stage_items("build", self.cfg, st, phase)[0]["extra"]
                 self.assertRegex(extra, r"[Dd]o NOT push")
-                self.assertIn("git rm -r --cached --ignore-unmatch .claude .build DerivedData .swiftpm .DS_Store", extra)
-                self.assertNotRegex(extra, r"Commit, push|commit, push")
+                self.assertRegex(extra, r"[Nn]ever run `git rm`")
+                self.assertNotRegex(extra, r"Commit, push|commit, push|run exactly this command")
 
 
 class DropLocalState(Base):
@@ -165,6 +165,15 @@ class CodingSplit(Base):
         state.save_state(st)
         steps._forget_stage("issue-9")
         self.assertEqual(state.load_state("issue-9")["done"], ["BUILD|revise|2|revise-code"])
+
+
+class BlockedRouting(Base):
+    def test_session_refusals_need_a_human_and_build_problems_go_to_the_coder(self):
+        from cf import decide
+        self.assertTrue(decide.is_environment_block("every git command returned \"This command requires approval\""))
+        self.assertTrue(decide.is_environment_block("swift test was refused: non-interactive session"))
+        self.assertFalse(decide.is_environment_block("AC-7: the migration test does not compile"))
+        self.assertFalse(decide.is_environment_block("AppTests/Foo.swift line 12 unterminated raw string"))
 
 
 if __name__ == "__main__":

@@ -184,13 +184,30 @@ def catalog_block(cfg: dict) -> str:
 
 # Given to the builder in every phase that commits. The local model follows this literally.
 LOCAL_FIX = (
-    "\n\nLOCAL TOOL STATE (read this carefully): the folders `.claude/`, `.build/`, `DerivedData/`, `.swiftpm/` "
-    "and the file `.DS_Store` must NOT be in any commit. If `git diff --name-only origin/main...HEAD` lists any of "
-    "them, run exactly this command: `git rm -r --cached --ignore-unmatch .claude .build DerivedData .swiftpm "
-    ".DS_Store`, then `git commit -m \"Remove local tool state from the branch\"`. That keeps the files on disk and "
-    "removes them from git. Then run `git diff --name-only origin/main...HEAD` again and check that nothing from "
-    "those folders is listed."
+    "\n\nLOCAL TOOL STATE: the folders `.claude/`, `.build/`, `DerivedData/`, `.swiftpm/` and the file `.DS_Store` "
+    "must NOT be in any commit. You do not remove them: the factory does that before the gate. Never run `git rm`, "
+    "`git reset` or `git commit --amend`, and never rewrite history."
 )
+
+
+def findings_round(st: dict) -> int | None:
+    """The latest earlier round that has findings (checks or reviews). Feedback and blocked rounds may have skipped
+    numbers, so 'the previous round' is not always there; this one is."""
+    if "job_id" not in st or not st.get("round"):
+        return None
+    jd = state.job_dir(st["job_id"])
+    for n in range(st["round"] - 1, 0, -1):
+        d = jd / f"round-{n}"
+        if d.exists() and (any(d.glob("checks.md")) or any(d.glob("review-*.md"))):
+            return n
+    return None
+
+
+def _findings_text(st: dict) -> str:
+    n = findings_round(st)
+    if n is None:
+        return "There are no findings files; act on the feedback-*.md files named in your prompt."
+    return f"The latest findings are in round-{n}/ (checks.md and review-*.md)."
 
 
 def coding_model(st: dict, cfg: dict, fallback: str) -> str:
@@ -229,7 +246,7 @@ def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list
                           "both after the gate and reviewers pass. Then write build.md with STATUS: READY or BLOCKED."
                           + LOCAL_FIX),
             "revise": (f"Phase: revise-commit. The coder changed the code for this round (see build/revise-code.md). "
-                       f"Check those changes against round-{st['round'] - 1}/checks.md and any review-*.md there. Run "
+                       f"Check those changes against the findings: {_findings_text(st)} Run "
                        "the tests. Do NOT write product code yourself. If the fix is complete, commit. Do NOT push and "
                        "do NOT open a PR. Then write build.md with STATUS: READY or BLOCKED." + LOCAL_FIX),
         }
@@ -245,8 +262,8 @@ def coder_items(st: dict, cfg: dict) -> list[dict]:
     fallback = cfg["stages"]["build"]["model"]
     return [{"agent": "factory-coder", "model": coding_model(st, cfg, fallback), "tag": "revise-code",
              "stage": "specialists", "output": "build/revise-code.md",
-             "extra": (f"Phase: revise. Read round-{st['round'] - 1}/checks.md and any review-*.md there. Fix what they "
-                       "ask and nothing else. Edit the code in the worktree. Do NOT commit, push or open a PR: the "
+             "extra": (f"Phase: revise. {_findings_text(st)} Read the feedback-*.md files too: a human's instructions win. "
+                       "Fix what the findings ask and nothing else. Edit the code in the worktree. Do NOT commit, push or open a PR: the "
                        "orchestrator does that. Then write build/revise-code.md: one line per file you changed, saying "
                        "what changed, and the test command you ran.")}]
 

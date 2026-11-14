@@ -93,6 +93,31 @@ def validate_split(job_id: str) -> list[dict]:
     return issues
 
 
+ENVIRONMENT_BLOCK = re.compile(r"requires approval|not allowed|permission|denied|sandbox|non-interactive|"
+                               r"could not run|cannot run|command .* refused", re.IGNORECASE)
+
+
+def is_environment_block(text: str) -> bool:
+    """True when the block is the session's permissions or tools, which a coder cannot fix."""
+    return bool(ENVIRONMENT_BLOCK.search(text))
+
+
+def _blocked(st: dict, cfg: dict, reason: str) -> tuple[str, str]:
+    """A BLOCKED build. Environment problems need a human. Anything else becomes findings for the next coder round,
+    written to round-N/checks.md, so the coder reads the block the same way it reads a failed gate."""
+    reason = " ".join(reason.split())
+    if is_environment_block(reason):
+        return "NEEDS_HUMAN", "builder blocked by the session (a human must allow the command): " + reason[:200]
+    if st["round"] >= st["round_limit"]:
+        return "NEEDS_HUMAN", "builder blocked in the last allowed round: " + reason[:200]
+    rd = state.job_dir(st["job_id"]) / f"round-{st['round']}"
+    rd.mkdir(parents=True, exist_ok=True)
+    (rd / "checks.md").write_text(f"GATE: FAIL\n\n## Summary\n- builder blocked: {reason[:800]}\n")
+    st["round"] += 1
+    st["phase"] = "revise"
+    return "BUILD", f"builder blocked, sent back to the coder as round {st['round']}: {reason[:120]}"
+
+
 def decide_build(st: dict, cfg: dict) -> tuple[str, str]:
     job = st["job_id"]
     if st.get("phase") in (None, "plan"):
@@ -114,7 +139,7 @@ def decide_build(st: dict, cfg: dict) -> tuple[str, str]:
     doc = state.read_doc(job, "build.md")
     status = first_word(field(doc, "STATUS"))
     if status == "BLOCKED":
-        return "NEEDS_HUMAN", "builder blocked: " + (section(doc, "Blocked") or "see build.md")[:200]
+        return _blocked(st, cfg, section(doc, "Blocked") or "see build.md")
     if status != "READY":
         raise FactoryError("build.md needs 'STATUS: READY | BLOCKED'")
     named = (field(doc, "DRAFT_PR").split() or [""])[0]  # first word, case kept: it is a URL
