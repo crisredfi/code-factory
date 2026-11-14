@@ -109,10 +109,8 @@ def run_gate(st: dict, cfg: dict) -> str:
         problems.append("touches protected paths: " + ", ".join(touched))
     local_state = [f for f in changed if is_local_state(f, cfg.get("local_state_paths", []))]
     if local_state:
-        problems.append(
-            "commits local tool state: " + ", ".join(local_state) + ". Fix: run "
-            "`git rm -r --cached --ignore-unmatch .claude .build DerivedData .swiftpm .DS_Store`, then commit "
-            "the removal (the files stay on disk). Do not push; the factory does that.")
+        problems.append("commits local tool state: " + ", ".join(local_state) + ". The factory removes "
+                        "these before the gate. Do not run git rm yourself.")
     checks = target(cfg) / cfg["checks_command"]
     output = ""
     if not checks.exists():
