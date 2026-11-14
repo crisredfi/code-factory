@@ -65,6 +65,24 @@
   .step.st-waiting { border-color: var(--changes); color: var(--changes); background: color-mix(in srgb, var(--changes) 14%, transparent); }
   .step.st-pending { color: var(--faint); border-style: dashed; }
   .reason { margin: 6px 0; padding: 7px 9px; border-radius: 7px; border-left: 4px solid var(--human); background: color-mix(in srgb, var(--human) 12%, transparent); font-size: 12px; line-height: 1.4; }
+  .next { margin: 6px 0 2px; font-size: 12px; line-height: 1.4; padding: 6px 8px; border-radius: 6px; border-left: 4px solid var(--active); background: color-mix(in srgb, var(--active) 10%, transparent); }
+  .next.wait { border-left-color: var(--changes); background: color-mix(in srgb, var(--changes) 10%, transparent); }
+  .next.human { border-left-color: var(--human); background: color-mix(in srgb, var(--human) 10%, transparent); }
+  .next.done { border-left-color: var(--pass); background: color-mix(in srgb, var(--pass) 10%, transparent); }
+  .step small.past { color: var(--human); font-weight: 700; opacity: 1; }
+  .story { grid-column: 1 / -1; max-height: 42vh; overflow-y: auto; padding: 12px 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .story .next { margin: 0 0 8px; }
+  .story .reason { margin: 0 0 10px; }
+  .story-step { margin-bottom: 8px; }
+  .story-step > b { font-family: var(--mono); font-size: 12px; }
+  .story-step ul { list-style: none; margin: 3px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--line); }
+  .att { padding: 2px 0; color: var(--muted); }
+  .att .mk { display: inline-block; width: 16px; font-weight: 700; }
+  .att-failed { color: var(--human); }
+  .att-failed .mk { color: var(--human); }
+  .att-done .mk { color: var(--pass); }
+  .att-active .mk, .att-waiting .mk { color: var(--active); }
+  .att button { margin-left: 6px; font-size: 11px; padding: 1px 6px; }
   .reason b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--human); margin-bottom: 2px; }
   .card .top { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
   .card .title { font-size: 13px; line-height: 1.3; margin: 2px 0 6px; cursor: pointer; }
@@ -145,6 +163,7 @@
     <button class="x" id="d-close">Close</button>
   </div>
   <div class="dbody">
+    <section class="story" id="d-story"></section>
     <nav class="flist" id="d-files"></nav>
     <div class="fview"><pre id="d-text">Select a file.</pre></div>
   </div>
@@ -201,7 +220,10 @@ async function load() {
     s.catalog_reviewers_list = Object.keys(s.catalog.reviewers)
     const h = JSON.stringify(s)
     state = s
-    $('cap').textContent = `${s.capacity.active}/${s.capacity.max} active · ${s.jobs.length} jobs · ${new Date().toLocaleTimeString()}`
+    const sc = s.scheduler || {}
+    const nextAt = sc.next_at ? new Date(sc.next_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+    const sched = sc.enabled === false ? 'scheduler off' : `scheduler ${sc.last_result === 'error' || (sc.last_result || '').startsWith('error') ? 'error' : 'on'}${nextAt ? ' · next tick ' + nextAt : ''}`
+    $('cap').textContent = `${s.capacity.active}/${s.capacity.max} active · ${s.jobs.length} jobs · ${sched} · ${new Date().toLocaleTimeString()}`
     if (h !== lastHash) { lastHash = h; render() }
     if (openJob) renderDrawerHead()
   } catch (e) { $('cap').textContent = 'offline: ' + e.message }
@@ -249,9 +271,38 @@ function actionsFor(j) {
 }
 
 const STEP_MARK = { done: '✓', failed: '✗', active: '…', waiting: '⏸', pending: '·' }
+function nextTone(j) {
+  if (j.state === 'NEEDS_HUMAN' || j.state === 'SPLIT_REVIEW' || j.state === 'REJECTED') return 'human'
+  if (j.state === 'NEEDS_INFO' || j.state === 'MERGE_PENDING') return 'wait'
+  if (j.state === 'COMPLETE') return 'done'
+  return ''
+}
+
 function stepChip(s) {
-  const detail = s.detail ? `<small>${esc(s.detail)}</small>` : ''
+  const failed = (s.attempts || []).filter((a) => a.status === 'failed' && a.round)
+  // A failed round stays red after a later round passes: "failed in round 2" is never erased by the retry.
+  const past = s.status !== 'failed' && failed.length ? `<small class="past">failed in round ${failed.map((a) => a.round).join(', ')}</small>` : ''
+  const detail = !past && s.detail ? `<small>${esc(s.detail)}</small>` : past
   return `<div class="step st-${s.status}" title="${esc(s.name)}: ${esc(s.status)}${s.detail ? ' (' + esc(s.detail) + ')' : ''}">${STEP_MARK[s.status] || ''} ${esc(s.name)}${detail}</div>`
+}
+
+function renderStory(j) {
+  const rows = (j.steps || []).map((s) => {
+    const items = (s.attempts || []).map((a) => `<li class="att att-${a.status}"><span class="mk">${a.status === 'failed' ? '✗' : '✓'}</span>${a.round ? `round ${a.round} · ` : ''}${esc(a.detail)}${a.file ? `<button data-file="${esc(a.file)}">open</button>` : ''}</li>`).join('')
+    const current = s.status === 'pending' ? '' : `<li class="att att-${s.status}"><span class="mk">${STEP_MARK[s.status] || ''}</span>now: ${esc(s.status)}${s.detail ? ' · ' + esc(s.detail) : ''}</li>`
+    return `<div class="story-step"><b>${esc(s.name)}</b><ul>${items}${current || '<li class="att"><span class="mk">·</span>not reached</li>'}</ul></div>`
+  }).join('')
+  const next = j.next ? `<div class="next ${nextTone(j)}">${esc(j.next)}</div>` : ''
+  const reason = j.reason ? `<div class="reason"><b>${j.state === 'NEEDS_HUMAN' ? 'Why it stopped' : 'Reason'}</b>${esc(j.reason)}</div>` : ''
+  $('d-story').innerHTML = next + reason + rows
+}
+
+// The file to open first: the latest failed attempt, so the reason is one click away.
+function defaultFile(j, files) {
+  const failed = (j.steps || []).flatMap((s) => s.attempts || []).filter((a) => a.status === 'failed' && a.file)
+  const pick = failed.length ? failed[failed.length - 1].file : null
+  if (pick && files.includes(pick)) return pick
+  return files.find((f) => f === 'issue.md') || files[0] || null
 }
 
 function card(j) {
@@ -276,6 +327,7 @@ function card(j) {
       ${j.blocked_by?.length && j.state === 'QUEUED' ? `<span>waits for #${j.blocked_by.join(', #')}</span>` : ''}
     </div>
     <div class="steps">${(j.steps || []).map(stepChip).join('')}</div>
+    ${j.next ? `<div class="next ${nextTone(j)}">${esc(j.next)}</div>` : ''}
     ${j.reason ? `<div class="reason"><b>${j.state === 'NEEDS_HUMAN' ? 'Why it stopped' : 'Reason'}</b>${esc(j.reason)}</div>` : ''}
     ${flag ? `<div class="hint">${flag}</div>` : ''}${hint ? `<div class="hint">${hint}</div>` : ''}
     <div class="actions">${actionsFor(j)}</div>
@@ -302,6 +354,7 @@ function renderDrawerHead() {
   if (!j) return closeDrawer()
   $('d-id').textContent = `${j.job_id} · ${j.state}${j.round ? ' · round ' + j.round : ''}`
   $('d-title').textContent = j.title
+  renderStory(j)
   $('d-meta').innerHTML = [j.url && `<a href="${esc(j.url)}" target="_blank">issue #${j.issue}</a>`, j.pr_url && `<a href="${esc(j.pr_url)}" target="_blank">PR</a>`, `reviewers: ${esc(j.reviewers.join(', '))}`].filter(Boolean).join(' · ')
 }
 
@@ -320,7 +373,8 @@ function closeDrawer() {
 async function loadFiles() {
   if (!openJob) return
   const { files } = await api('GET', `/api/job/${openJob}/files`)
-  if (!openFile || !files.includes(openFile)) openFile = files.find((f) => f === 'issue.md') || files[0] || null
+  const j = state.jobs.find((x) => x.job_id === openJob)
+  if (!openFile || !files.includes(openFile)) openFile = j ? defaultFile(j, files) : (files[0] || null)
   $('d-files').innerHTML = files.map((f) => `<button data-file="${esc(f)}" class="${f === openFile ? 'on' : ''}">${esc(f)}</button>`).join('') || '<div class="empty">No files yet.</div>'
   await showFile()
 }

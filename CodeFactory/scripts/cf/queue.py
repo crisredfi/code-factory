@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import concurrent.futures as cf
+import datetime as dt
+import fcntl
 import re
 from pathlib import Path
 
-from . import github, lifecycle, reviewers, state, util
+from . import github, lifecycle, paths, reviewers, state, util
 from .model import ACTIVE, PRIORITIES
 from .util import FactoryError
 
@@ -190,3 +192,46 @@ def tick(cfg: dict, dry: bool, out=print) -> None:
                 errors.append(f"{futs[f]}: {e}")
     for e in errors:
         out(f"error: {e}")
+
+
+# ---- scheduling: a tick runs on a timer (dashboard server) or by hand, never twice at once
+
+def _sched_file() -> Path:
+    return paths.INDEX.parent / "scheduler.json"
+
+
+def read_scheduler() -> dict:
+    return util.read_json(_sched_file(), {})
+
+
+def write_scheduler(**fields) -> None:
+    d = read_scheduler()
+    d.update(fields)
+    util.write_json(_sched_file(), d)
+
+
+def iso_after(seconds: int) -> str:
+    return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def run_tick(cfg: dict, dry: bool = False, out=print) -> bool:
+    """One tick under a file lock. Returns False (and runs nothing) when another tick holds the lock."""
+    lock_path = paths.INDEX.parent / "tick.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            out("another tick is running; skipped")
+            return False
+        try:
+            write_scheduler(last_at=util.now(), last_result="running")
+            try:
+                tick(cfg, dry, out)
+            except Exception as e:
+                write_scheduler(last_result=f"error: {e}")
+                raise
+            write_scheduler(last_result="ok")
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+    return True

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from . import agents, decide, lifecycle, reviewers, state, watchdog
 from .decide import validate_plan
+from . import util
 from .util import FactoryError, waves
 
 
@@ -62,7 +63,11 @@ def step_build(job_id: str, cfg: dict, dry: bool, out) -> None:
 
 
 def step_job(job_id: str, cfg: dict, dry: bool = False, out=print) -> None:
-    """Run one job's current stage. If an agent stayed stuck through every retry, the job waits for a human."""
+    """Run one job's current stage. If an agent stayed stuck through every retry, the job waits for a human.
+
+    Any other failure is recorded on the job (last_error, history) and retried on the next tick. After
+    self_heal.max_step_errors failures in a row, the job waits for a human with the last error as the reason.
+    """
     with state.job_lock(job_id):
         try:
             _run_stage(job_id, cfg, dry, out)
@@ -70,6 +75,40 @@ def step_job(job_id: str, cfg: dict, dry: bool = False, out=print) -> None:
             st = state.load_state(job_id)
             state.set_state(st, "NEEDS_HUMAN", f"self-heal gave up: {e}")
             out(f"{job_id}: NEEDS_HUMAN (self-heal gave up: {e})")
+            return
+        except FactoryError as e:
+            if dry:
+                raise
+            _record_error(job_id, cfg, str(e), out)
+            return
+        if not dry:
+            _clear_error(job_id)
+
+
+def _record_error(job_id: str, cfg: dict, message: str, out) -> None:
+    st = state.load_state(job_id)
+    st["error_streak"] = st.get("error_streak", 0) + 1
+    st["last_error"] = {"at": util.now(), "message": message}
+    limit = cfg.get("self_heal", {}).get("max_step_errors", 3)
+    if st["error_streak"] >= limit:
+        note = f"gave up after {st['error_streak']} errors: {message}"
+        st["error_streak"] = 0
+        out(f"{job_id}: NEEDS_HUMAN ({note})")
+        state.set_state(st, "NEEDS_HUMAN", note)
+        return
+    out(f"{job_id}: error {st['error_streak']} of {limit}, retrying on the next tick: {message}")
+    if not (st.get("history") and st["history"][-1]["note"].endswith(message)):
+        st["history"].append({"at": util.now(), "from": st["state"], "to": st["state"],
+                              "note": f"error {st['error_streak']} of {limit}, retry on next tick: {message}"})
+    state.save_state(st)
+
+
+def _clear_error(job_id: str) -> None:
+    st = state.load_state(job_id)
+    if st.get("error_streak") or st.get("last_error"):
+        st["error_streak"] = 0
+        st["last_error"] = None
+        state.save_state(st)
 
 
 def _run_stage(job_id: str, cfg: dict, dry: bool, out) -> None:
