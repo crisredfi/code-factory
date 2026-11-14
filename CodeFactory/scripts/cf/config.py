@@ -14,6 +14,8 @@ EDITABLE = {
     "auto_merge.enabled": bool,
     "auto_merge.max_risk": str,
     "github.comments": bool,
+    "self_heal.enabled": bool,
+    "self_heal.stuck_after_s": int,
 }
 
 

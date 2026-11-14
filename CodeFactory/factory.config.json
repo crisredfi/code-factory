@@ -31,6 +31,30 @@
       "acceptEdits"
     ]
   },
+  "models": {
+    "claude": [
+      "claude-fable-5-2",
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5"
+    ],
+    "local": {
+      "command": "lms",
+      "base_url": "http://localhost:1234",
+      "auth_token": "lmstudio",
+      "unload_others": true
+    }
+  },
+  "self_heal": {
+    "enabled": true,
+    "poll_s": 15,
+    "confirm_s": 60,
+    "stuck_after_s": 900,
+    "local_stuck_after_s": 1800,
+    "max_run_s": 5400,
+    "max_retries": 2,
+    "fallback_model": ""
+  },
   "stages": {
     "intake": {
       "agent": "intake",

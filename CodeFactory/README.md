@@ -7,6 +7,7 @@ sub-issues, and an editable dashboard runs the factory.
 
 - Brief and decisions: [docs/PROMPT.md](docs/PROMPT.md)
 - States, gates and rounds: [docs/STATES.md](docs/STATES.md)
+- Models per run, local models in LM Studio, and self-healing: [docs/MODELS.md](docs/MODELS.md)
 - Worked examples of every file a job writes: [examples/](examples/README.md)
 - What the factory comments on GitHub, and how: [docs/COMMENTS.md](docs/COMMENTS.md)
 - The procedure Claude follows: [skills/code-factory/SKILL.md](skills/code-factory/SKILL.md)
@@ -21,6 +22,7 @@ CodeFactory/
   scripts/cf/              one job per module: paths, model, util, config, state, reviewers,
                            gate, decide, agents, github, lifecycle, steps, queue, report, api, cli
   docs/COMMENTS.md         what the factory posts on GitHub, where, and in what format
+  docs/MODELS.md           models per run, local models (LM Studio), self-healing
   templates/checks/        checks.sh templates: generic, ios, node, python
   dashboard/index.html     the editable dashboard, served by `factory.py serve`
   agents/                  one markdown file per agent (intake, spec-writer, builder,
@@ -32,6 +34,8 @@ CodeFactory/
   BOARD.md                 text board (generated)
   examples/                worked job folders and example comments; tests check them against the code
   tests/test_factory.py    unit, git-gate and API tests
+  tests/test_models.py     run profiles, LM Studio loading, retries (fake lms and claude)
+  tests/test_watchdog.py   stuck detection, with a fake clock and real processes
   tests/test_examples.py   runs the real parsers over examples/
 ```
 

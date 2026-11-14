@@ -7,8 +7,8 @@ intake, a spec, a build with specialist agents, a deterministic gate, parallel r
 either waits for a merge or asks a human. Every step writes a file you can read, and every move is
 recorded in the job's own folder.
 
-> **Status:** version 2. The controller, gates, dashboard, comments and skill are built and unit-tested
-> (55 tests). It has not yet run end to end against a real target repository. Expect rough edges.
+> **Status:** version 2. The controller, gates, dashboard, comments, skill, per-run model choice (Claude or local LM Studio)
+> and self-healing are built and unit-tested (93 tests). It has not yet run end to end against a real target repository. Expect rough edges.
 
 ## How a job moves
 
@@ -38,6 +38,8 @@ issue (label: factory)
 - **Questions and answers.** A job waiting for information resumes when the author answers on the issue. Earlier decisions are kept, so the next pass does not ask the same thing again.
 - **Worked examples** of every file a job writes, which are checked by the tests against the real parsers. See [examples/](CodeFactory/examples/README.md).
 - **A Claude Code skill** that runs the factory for you: `/factory run`, `/factory run <n>`, and free-form questions, feedback, rejections and new features. See [the skill](CodeFactory/skills/code-factory/SKILL.md).
+- **Models per run.** `/factory run` asks which model each stage uses: Claude, or a local model in LM Studio. The factory loads and unloads local models as the stages need them. See [docs/MODELS.md](CodeFactory/docs/MODELS.md).
+- **Self-healing.** An agent that stops making progress is noticed, killed and retried. A job that stays stuck goes to a human. See [docs/MODELS.md](CodeFactory/docs/MODELS.md#5-self-healing-is-the-agent-really-stuck).
 
 ## Quick start
 
