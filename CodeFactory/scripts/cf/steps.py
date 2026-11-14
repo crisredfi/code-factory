@@ -39,9 +39,11 @@ def apply(job_id: str, cfg: dict) -> tuple[str, str]:
 
 
 def _forget_stage(job_id: str) -> None:
+    """Forget the stage's runs so they run again, except coders: their edits are already in the worktree,
+    and a coder that ran again would apply them twice. Only the orchestrator's run is retried."""
     st = state.load_state(job_id)
     prefix = f"{st['state']}|{st.get('phase')}|{st.get('round')}|"
-    kept = [k for k in st.get("done", []) if not k.startswith(prefix)]
+    kept = [k for k in st.get("done", []) if not k.startswith(prefix) or k.endswith("|revise-code")]
     if len(kept) != len(st.get("done", [])):
         st["done"] = kept
         state.save_state(st)
@@ -62,13 +64,18 @@ def step_build(job_id: str, cfg: dict, dry: bool, out) -> None:
         plan = validate_plan(job_id, cfg)
         for n, wave in enumerate(waves(plan["subtasks"]), 1):
             out(f"  wave {n}: {', '.join(s['id'] for s in wave)}")
-            agents.execute(job_id, agents.subtask_items(plan, wave, cfg), cfg, dry, out)
+            agents.execute(job_id, agents.subtask_items(plan, wave, cfg, st), cfg, dry, out)
         if dry:
             return
         st = state.load_state(job_id)  # the subtask runs recorded their markers on disk; keep them
         st["phase"] = "integrate"
         state.save_state(st)
     st = state.load_state(job_id)
+    if st.get("phase") == "revise":
+        agents.execute(job_id, agents.coder_items(st, cfg), cfg, dry, out)  # the coder changes the code
+        if dry:
+            return
+        st = state.load_state(job_id)
     if st.get("phase") in {"integrate", "revise"}:
         agents.execute(job_id, agents.stage_items("build", cfg, st, st["phase"]), cfg, dry, out)
         if dry:

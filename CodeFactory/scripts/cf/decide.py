@@ -21,6 +21,10 @@ def decide_intake(st: dict, cfg: dict) -> tuple[str, str]:
     risk = first_word(field(doc, "RISK"))
     if risk not in RISKS:
         raise FactoryError("intake.md needs 'RISK: LOW | MEDIUM | HIGH'")
+    difficulty = first_word(field(doc, "DIFFICULTY")) or "NORMAL"
+    if difficulty not in {"NORMAL", "HARD"}:
+        raise FactoryError("intake.md needs 'DIFFICULTY: NORMAL | HARD' (or no DIFFICULTY line)")
+    st["difficulty"] = difficulty
     add, drop = names_in(field(doc, "REVIEWERS_ADD")), names_in(field(doc, "REVIEWERS_DROP"))
     catalog = cfg["reviewers"]["catalog"]
     bad = [n for n in add + drop if n not in catalog]

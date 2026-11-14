@@ -138,5 +138,34 @@ class DropLocalState(Base):
             self.gate.drop_local_state(self.wt, "main", self.cfg["local_state_paths"])
 
 
+class CodingSplit(Base):
+    """Orchestrator (build model) plans and commits; coders write code on the coding model, by difficulty."""
+
+    def test_coding_model_follows_difficulty(self):
+        cfg = {"coding": {"default": "local:qwen3.6-35b-a3b-splash", "hard": "local:qwen3.8-27b-splash"}}
+        self.assertEqual(agents.coding_model({"difficulty": "NORMAL"}, cfg, "x"), "local:qwen3.6-35b-a3b-splash")
+        self.assertEqual(agents.coding_model({"difficulty": "HARD"}, cfg, "x"), "local:qwen3.8-27b-splash")
+        self.assertEqual(agents.coding_model({}, cfg, "x"), "local:qwen3.6-35b-a3b-splash")
+        self.assertEqual(agents.coding_model({"difficulty": "HARD"}, {}, "fallback"), "fallback")
+
+    def test_subtasks_and_revise_coder_use_the_coding_model_not_the_orchestrator(self):
+        cfg = dict(self.cfg, coding={"default": "local:a", "hard": "local:b"})
+        st = {"difficulty": "HARD", "round": 2}
+        plan = {"subtasks": [{"id": "s1", "specialist": "backend-engineer", "covers": []}]}
+        self.assertEqual(agents.subtask_items(plan, plan["subtasks"], cfg, st)[0]["model"], "local:b")
+        self.assertEqual(agents.coder_items(st, cfg)[0]["model"], "local:b")
+        self.assertEqual(agents.coder_items(st, cfg)[0]["agent"], "factory-coder")
+
+    def test_a_failed_orchestrator_run_does_not_rerun_the_coder(self):
+        paths.PROFILE = self.tmp / "queue" / "run-profile.json"
+        state.save_state(state.new_state("issue-9", 9, "t", "", ["factory"], self.cfg, 1))
+        state.job_dir("issue-9").mkdir(parents=True, exist_ok=True)
+        st = state.load_state("issue-9")
+        st.update(state="BUILD", phase="revise", round=2, done=["BUILD|revise|2|revise-code", "BUILD|revise|2|build-revise"])
+        state.save_state(st)
+        steps._forget_stage("issue-9")
+        self.assertEqual(state.load_state("issue-9")["done"], ["BUILD|revise|2|revise-code"])
+
+
 if __name__ == "__main__":
     unittest.main()
