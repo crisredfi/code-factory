@@ -187,5 +187,14 @@ class HoldRelease(Base):
             lifecycle.hold_job(st, True)
 
 
+class DirtyTreeIgnoresLocalState(Base):
+    def test_untracked_local_state_is_not_uncommitted_work(self):
+        from cf import gate
+        pats = [".claude/", "project.xcworkspace/"]
+        self.assertTrue(gate.is_local_state(".claude/", pats) or gate.is_local_state("x/.claude/", pats))
+        self.assertTrue(gate.is_local_state("DooMail.xcodeproj/project.xcworkspace/", pats))
+        self.assertFalse(gate.is_local_state("AppTests/Foo.swift", pats))
+
+
 if __name__ == "__main__":
     unittest.main()
