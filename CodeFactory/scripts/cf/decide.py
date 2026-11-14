@@ -6,6 +6,7 @@ Deciders may write files (worktrees, gate results), and they raise FactoryError 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from . import gate, reviewers, state, util
 from .model import MODES, REVIEW_VERDICTS, RISKS
@@ -99,6 +100,13 @@ def decide_build(st: dict, cfg: dict) -> tuple[str, str]:
         return "BUILD", f"plan accepted ({plan['mode']}, {len(plan['subtasks'])} subtasks)"
     if st["phase"] == "subtasks":
         raise FactoryError("subtasks have not run yet; use `step`")
+    # Local tool state comes out of the branch first, whatever the builder said: it is never product work.
+    # An error here is left for the gate to report; it must not clear this stage's agent runs.
+    if st.get("worktree") and Path(st["worktree"]).exists():
+        try:
+            gate.drop_local_state(Path(st["worktree"]), cfg["github"]["base_branch"], cfg.get("local_state_paths", []))
+        except FactoryError:
+            pass
     doc = state.read_doc(job, "build.md")
     status = first_word(field(doc, "STATUS"))
     if status == "BLOCKED":

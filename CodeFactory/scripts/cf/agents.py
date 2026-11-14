@@ -182,6 +182,17 @@ def catalog_block(cfg: dict) -> str:
     return "\n".join(lines)
 
 
+# Given to the builder in every phase that commits. The local model follows this literally.
+LOCAL_FIX = (
+    "\n\nLOCAL TOOL STATE (read this carefully): the folders `.claude/`, `.build/`, `DerivedData/`, `.swiftpm/` "
+    "and the file `.DS_Store` must NOT be in any commit. If `git diff --name-only origin/main...HEAD` lists any of "
+    "them, run exactly this command: `git rm -r --cached --ignore-unmatch .claude .build DerivedData .swiftpm "
+    ".DS_Store`, then `git commit -m \"Remove local tool state from the branch\"`. That keeps the files on disk and "
+    "removes them from git. Then run `git diff --name-only origin/main...HEAD` again and check that nothing from "
+    "those folders is listed."
+)
+
+
 def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list[dict]:
     """Agent items for one stage key: intake | spec | build | review.<name>."""
     if key.startswith("review."):
@@ -197,10 +208,12 @@ def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list
                      "(single | subtasks | split), and pick specialists only from the catalog below. Write "
                      "build/plan.json. For mode split, also write build/split.json and set build.md to "
                      "STATUS: SPLIT.\n\n" + catalog_block(cfg)),
-            "integrate": ("Phase: integrate. Read build/subtasks/*.md, finish the work, commit, push, make sure the "
-                          "draft PR exists, and write build.md with STATUS: READY or BLOCKED."),
+            "integrate": ("Phase: integrate. Read build/subtasks/*.md, finish the work, and commit. Do NOT push and do "
+                          "NOT open a PR: the factory does both after the gate and reviewers pass. Then write build.md "
+                          "with STATUS: READY or BLOCKED." + LOCAL_FIX),
             "revise": (f"Phase: revise. Read round-{st['round'] - 1}/checks.md and any review-*.md there and fix "
-                       "only what they ask. Commit, push, update build.md with STATUS: READY or BLOCKED."),
+                       "only what they ask. Commit. Do NOT push and do NOT open a PR. Then update build.md with "
+                       "STATUS: READY or BLOCKED." + LOCAL_FIX),
         }
         output = "build/plan.json" if phase == "plan" else "build.md"
         return [{"agent": stage["agent"], "model": stage["model"], "tag": f"build-{phase}", "stage": "build",

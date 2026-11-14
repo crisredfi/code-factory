@@ -113,6 +113,8 @@ The subtasks have run. Their reports are in `build/subtasks/*.md`.
    `.DS_Store`. The gate refuses a branch that contains them. Run `git status` before every commit and check
    that each listed file is one you meant to change. Restore `Package.resolved` and any other file a test
    run rewrote, so it is not in the commit.
+   If an earlier commit on this branch already contains local tool state, do not rewrite history. Run
+   `git rm -r --cached --ignore-unmatch .claude .build DerivedData .swiftpm .DS_Store` and commit the removal.
 4. Do not push and do not open a pull request. The factory pushes the branch and opens the PR itself after
    the gate and every reviewer pass, so your commits are the whole handoff.
 5. Write `build.md` (format below) with `STATUS: READY` only when your commits are in place and the tests you

@@ -82,5 +82,61 @@ class RoundRows(Base):
         self.assertEqual(rows[1]["gate"], "pending")
 
 
+class BuilderInstructions(Base):
+    """The local model follows these literally: the local-state command and 'do not push' must be in every committing phase."""
+
+    def test_committing_phases_say_not_to_push_and_how_to_drop_local_state(self):
+        from cf import config  # noqa: F401
+        st = {"job_id": "issue-9", "state": "BUILD", "round": 2, "phase": "revise", "issue": 9, "branch": "b",
+              "worktree": None, "round_limit": 5}
+        for phase in ["integrate", "revise"]:
+            with self.subTest(phase=phase):
+                st["phase"] = phase
+                extra = agents.stage_items("build", self.cfg, st, phase)[0]["extra"]
+                self.assertRegex(extra, r"[Dd]o NOT push")
+                self.assertIn("git rm -r --cached --ignore-unmatch .claude .build DerivedData .swiftpm .DS_Store", extra)
+                self.assertNotRegex(extra, r"Commit, push|commit, push")
+
+
+class DropLocalState(Base):
+    """Real git: the factory takes .claude/ out of a branch with one commit, and leaves real work alone."""
+
+    def git(self, *args, cwd):
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+               "GIT_COMMITTER_EMAIL": "t@t", "PATH": __import__("os").environ["PATH"]}
+        return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, env=env, check=True).stdout
+
+    def setUp(self):
+        super().setUp()
+        from cf import gate
+        self.gate = gate
+        origin, work = self.tmp / "origin.git", self.tmp / "wt"
+        self.git("init", "-q", "--bare", "-b", "main", str(origin), cwd=self.tmp)
+        self.git("clone", "-q", str(origin), str(work), cwd=self.tmp)
+        (work / "app.txt").write_text("base\n")
+        self.git("add", "-A", cwd=work); self.git("commit", "-q", "-m", "base", cwd=work)
+        self.git("push", "-q", "-u", "origin", "main", cwd=work)
+        self.git("checkout", "-q", "-b", "factory/issue-9", cwd=work)
+        (work / ".claude").mkdir(); (work / ".claude" / "ce-memory.db").write_text("db")
+        (work / "app.txt").write_text("base\nfeature\n")
+        self.git("add", "-A", cwd=work); self.git("commit", "-q", "-m", "feature with tool state", cwd=work)
+        self.wt = work
+
+    def test_removes_local_state_in_one_commit_and_keeps_files_on_disk(self):
+        removed = self.gate.drop_local_state(self.wt, "main", self.cfg["local_state_paths"])
+        self.assertEqual(removed, [".claude/ce-memory.db"])
+        self.assertTrue((self.wt / ".claude" / "ce-memory.db").exists())
+        changed = self.git("diff", "--name-only", "origin/main...HEAD", cwd=self.wt).split()
+        self.assertEqual(changed, ["app.txt"])
+        self.assertEqual(self.gate.drop_local_state(self.wt, "main", self.cfg["local_state_paths"]), [])
+
+    def test_refuses_when_something_else_is_staged(self):
+        (self.wt / "app.txt").write_text("other\n")
+        self.git("add", "app.txt", cwd=self.wt)
+        with self.assertRaises(FactoryError):
+            self.gate.drop_local_state(self.wt, "main", self.cfg["local_state_paths"])
+
+
 if __name__ == "__main__":
     unittest.main()
