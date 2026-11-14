@@ -5,7 +5,7 @@ import argparse
 import json
 import sys
 
-from . import api, config, lifecycle, models, queue, report, state, steps, agents, reviewers
+from . import api, config, github, lifecycle, models, queue, report, state, steps, agents, reviewers
 from .util import FactoryError, names_in
 
 
@@ -141,7 +141,9 @@ def run(args, cfg: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        run(args, config.load())
+        cfg = config.load()
+        github.set_repo(cfg)
+        run(args, cfg)
     except FactoryError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

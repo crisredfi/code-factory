@@ -557,5 +557,37 @@ class Dashboard(Base):
             self.assertIn(needle, html)
 
 
+class GithubRepoIsPassed(unittest.TestCase):
+    """Regression: comments and issues went to the factory's own repo because -R was missing."""
+
+    def test_issue_calls_pass_the_configured_repo(self):
+        from cf import github
+        calls = []
+        saved = (util.gh, github.REPO)
+        util.gh = lambda *a: (calls.append(list(a)), "[]" if "list" in a else "https://github.com/o/r/issues/7\n")[1]
+        try:
+            github.set_repo({"github": {"repo": "crisredfi/Doomail"}})
+            github.post_comment("issue", 411, "<!-- factory -->\nhi")
+            github.create_issue({"github": {"queue_label": "factory"}}, "t", "b")
+            github.fetch_issues({"github": {"queue_label": "factory"}})
+        finally:
+            util.gh, github.REPO = saved
+        for call in calls:
+            self.assertIn("-R", call)
+            self.assertEqual(call[call.index("-R") + 1], "crisredfi/Doomail")
+
+    def test_no_repo_configured_adds_no_flag(self):
+        from cf import github
+        calls = []
+        saved = (util.gh, github.REPO)
+        util.gh = lambda *a: (calls.append(list(a)), "")[1]
+        try:
+            github.set_repo({"github": {"repo": ""}})
+            github.post_comment("issue", 1, "<!-- factory -->\nhi")
+        finally:
+            util.gh, github.REPO = saved
+        self.assertNotIn("-R", calls[0])
+
+
 if __name__ == "__main__":
     unittest.main()
