@@ -49,9 +49,15 @@ def build_prompt(st: dict, cfg: dict, agent: str, output_rel: str, extra: str = 
 
 
 def run_agent(prompt: str, model: str, cwd, log: Path, cfg: dict, dry: bool,
-              env: dict | None = None, watch: dict | None = None) -> str:
-    """Run one `claude -p` agent. Raises watchdog.Stuck if the watchdog killed it for making no progress."""
+              env: dict | None = None, watch: dict | None = None, job_dir: Path | None = None) -> str:
+    """Run one `claude -p` agent. Raises watchdog.Stuck if the watchdog killed it for making no progress.
+
+    The agent's working directory is the target repo or the job's worktree. The job folder lives outside it,
+    so it is added explicitly with --add-dir. Without that the runner refuses to read or write the job's files.
+    """
     cmd = [cfg["runner"]["command"], "-p", "--model", model, *cfg["runner"].get("extra_args", [])]
+    if job_dir is not None:
+        cmd += ["--add-dir", str(job_dir)]
     if dry:
         return f"DRY RUN: {' '.join(cmd)} (prompt {len(prompt)} chars, cwd {cwd or '.'})"
     if not shutil.which(cmd[0]):
@@ -68,11 +74,11 @@ def _run_stage_once(job_id: str, it: dict, spec: str, prompt: str, cwd, log: Pat
     """One attempt. A local model is loaded (and the LM Studio lock held) before its agent runs."""
     watch = {"worktree": cwd and str(cwd), "job_dir": state.job_dir(job_id)}
     if dry or not models.is_local(spec):
-        return run_agent(prompt, spec, cwd, log, cfg, dry, watch=watch)
+        return run_agent(prompt, spec, cwd, log, cfg, dry, watch=watch, job_dir=watch["job_dir"])
     with models.local_turn(cfg, spec, log=lambda msg: out(f"  {it['tag']}: {msg}")) as lm:
         watch |= {"local": True, "local_up": lm.healthy}
         return run_agent(prompt, models.local_key(spec), cwd, log, cfg, dry,
-                         env=lm.child_env(dict(os.environ)), watch=watch)
+                         env=lm.child_env(dict(os.environ)), watch=watch, job_dir=watch["job_dir"])
 
 
 def _note_heal(job_id: str, text: str) -> None:

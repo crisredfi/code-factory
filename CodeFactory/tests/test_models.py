@@ -263,6 +263,21 @@ class AgentsUseTheProfile(Env):
                        out=lambda *a: None)
         self.assertEqual(self.claude_calls()[-1]["argv"][:3], ["-p", "--model", "claude-haiku-5-5"])
 
+    def test_the_job_folder_is_added_to_the_agents_directories(self):
+        """Regression: the runner refused to read the job folder, which lives outside the target repo."""
+        self.new_job()
+        agents.execute("issue-1", self.items(), self.cfg, dry=False, out=lambda *a: None)
+        argv = self.claude_calls()[-1]["argv"]
+        self.assertIn("--add-dir", argv)
+        self.assertEqual(argv[argv.index("--add-dir") + 1], str(state.job_dir("issue-1")))
+
+    def test_the_job_folder_is_added_for_local_runs_too(self):
+        self.new_job()
+        models.set_stages(["intake=local:qwen3.6-35b-a3b-splash"], self.cfg)
+        agents.execute("issue-1", self.items(), self.cfg, dry=False, out=lambda *a: None)
+        argv = self.claude_calls()[-1]["argv"]
+        self.assertEqual(argv[argv.index("--add-dir") + 1], str(state.job_dir("issue-1")))
+
     def test_dry_run_names_the_profile_model_and_does_not_touch_lm_studio(self):
         self.new_job()
         models.set_stages(["intake=local:qwen3.8-27b-splash"], self.cfg)
