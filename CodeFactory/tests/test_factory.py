@@ -48,6 +48,7 @@ class Base(unittest.TestCase):
         self.cfg = json.loads(REAL_CONFIG)
         self.cfg["target_repo"] = ""
         self.cfg["github"]["comments"] = False  # no gh calls unless a test turns it on
+        self.cfg["auto_merge"]["enabled"] = False  # tests never merge a real PR; a test turns it on explicitly
         util.write_json(paths.CONFIG, self.cfg)
         self.quiet = lambda *a, **k: None
 

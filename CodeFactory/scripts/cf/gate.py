@@ -21,6 +21,19 @@ def is_local_state(path: str, patterns: list[str]) -> bool:
     return False
 
 
+def warnings_in(output: str) -> list[str]:
+    """Advisory lines from the checks output (a `WARN:` line, or a `warning:` line in the verify summary).
+    They are shown on the card and in checks.md; they never fail the gate."""
+    out = []
+    for line in output.splitlines():
+        s = line.strip()
+        if s.startswith("WARN:"):
+            out.append(s[len("WARN:"):].strip())
+        elif s.startswith("verify:") and "warning:" in s:
+            out.append(s.split("warning:", 1)[1].strip())
+    return out
+
+
 def target(cfg: dict) -> Path:
     if not cfg.get("target_repo"):
         raise FactoryError("set target_repo in factory.config.json first")
@@ -85,7 +98,10 @@ def run_gate(st: dict, cfg: dict) -> str:
     verdict = "FAIL" if problems else "PASS"
     (rd / "checks.log").write_text(output)
     tail = "\n".join(output.splitlines()[-60:])
-    summary = "".join(f"- {p}\n" for p in problems) or "- checks passed\n"
+    warns = warnings_in(output)
+    summary = "".join(f"- {p}\n" for p in problems)
+    summary += "".join(f"- warning: {w}\n" for w in warns)
+    summary = summary or "- checks passed\n"
     (rd / "checks.md").write_text(f"GATE: {verdict}\nCOMMIT: {head}\n\n## Summary\n{summary}\n"
                                   f"## Output (tail)\n```\n{tail}\n```\n")
     return verdict

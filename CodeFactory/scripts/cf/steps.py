@@ -13,10 +13,22 @@ def apply(job_id: str, cfg: dict) -> tuple[str, str]:
     if decider is None:
         raise FactoryError(f"nothing to advance from {st['state']}")
     to, note = decider(st, cfg)
+    if to == "MERGE_PENDING":
+        # Gate and every reviewer passed: the flow pushes and opens the PR. A failure here leaves the job
+        # where it was, so the next tick retries it.
+        url = lifecycle.publish_pr(st, cfg)
+        note = f"{note}; PR {url}"
+        if not cfg["auto_merge"]["enabled"]:
+            state.set_state(st, to, note)
+            return to, note
+        state.set_state(st, to, note)
+        try:
+            lifecycle.merge_job(state.load_state(job_id), cfg, dry=False)
+        except FactoryError as e:
+            state.set_state(state.load_state(job_id), "NEEDS_HUMAN", f"auto-merge failed: {e}")
+            return "NEEDS_HUMAN", f"auto-merge failed: {e}"
+        return "COMPLETE", f"auto-merged {url}"
     state.set_state(st, to, note)
-    if to == "MERGE_PENDING" and cfg["auto_merge"]["enabled"]:
-        lifecycle.merge_job(state.load_state(job_id), cfg, dry=False)
-        return "COMPLETE", "auto-merged (auto_merge.enabled)"
     return to, note
 
 

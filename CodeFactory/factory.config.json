@@ -137,8 +137,8 @@
     }
   },
   "auto_merge": {
-    "enabled": false,
-    "max_risk": "LOW"
+    "enabled": true,
+    "max_risk": "MEDIUM"
   },
   "local_state_paths": [
     ".claude/",
