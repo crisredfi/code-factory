@@ -29,6 +29,47 @@ def merge_job(st: dict, cfg: dict, dry: bool) -> str:
     return f"merged {st['pr_url']}"
 
 
+def publish_pr(st: dict, cfg: dict) -> str:
+    """The flow pushes the job's branch and opens its PR, after the gate and every reviewer pass.
+
+    The push always runs, so commits from a revise round reach the remote. The PR is created once; a PR the
+    builder already named in build.md (DRAFT_PR) is kept. The body carries the build summary, the gate
+    output and the reviewer verdicts, so a reader sees what was checked.
+    """
+    wt = Path(st["worktree"]) if st.get("worktree") else None
+    if wt is None or not wt.exists():
+        raise FactoryError("no worktree to publish from")
+    util.git(wt, "push", "-u", "origin", st["branch"])
+    if st.get("pr_url"):
+        return st["pr_url"]
+    jd = state.job_dir(st["job_id"])
+    body_file = jd / "pr-body.md"
+    body_file.write_text(pr_body(st))
+    title = st.get("title") or f"Issue #{st['issue']}"
+    url = github.create_pr(cfg, st["branch"], cfg["github"]["base_branch"], title, body_file)
+    st["pr_url"] = url
+    return url
+
+
+def pr_body(st: dict) -> str:
+    rd = state.round_dir(st)
+    build = state.read_doc(st["job_id"], "build.md")
+    checks = (rd / "checks.md").read_text() if (rd / "checks.md").exists() else "(no gate output)"
+    verdicts = []
+    for p in sorted(rd.glob("review-*.md")):
+        verdict = util.first_word(util.field(p.read_text(), "VERDICT"))
+        risk = util.first_word(util.field(p.read_text(), "RISK"))
+        verdicts.append(f"- {p.stem.removeprefix('review-')}: {verdict} (risk {risk})")
+    return "\n".join([
+        f"Closes #{st['issue']}", "",
+        "## What was implemented", build.strip() or "(see the job folder)", "",
+        "## Verification (the gate's own run, `checks.sh`)", "```", checks.strip(), "```", "",
+        "## Reviews", *(verdicts or ["- none"]), "",
+        f"Opened by the code factory for job `{st['job_id']}`.", "",
+        "🤖 Generated with [Claude Code](https://claude.com/claude-code)", "",
+    ])
+
+
 def approve_split(st: dict, cfg: dict, dry: bool) -> str:
     """Create the drafted sub-issues on GitHub, in dependency order, and wait for them."""
     if st["state"] != "SPLIT_REVIEW":

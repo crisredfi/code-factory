@@ -57,7 +57,7 @@ def run(args, cfg: dict) -> None:
     elif c == "next":
         print("\n".join(queue.next_jobs(cfg)))
     elif c == "tick":
-        queue.tick(cfg, args.dry_run)
+        queue.run_tick(cfg, args.dry_run)
     elif c == "step":
         steps.step_job(args.job, cfg, args.dry_run)
     elif c == "run":

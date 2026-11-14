@@ -108,11 +108,14 @@ The subtasks have run. Their reports are in `build/subtasks/*.md`.
    subtasks, fill gaps, and make the whole thing work together.
 2. Check each covered criterion against the code, not against the specialist's word. Run the
    project's tests from the worktree.
-3. Commit with clear messages, `git push -u origin factory/<job-id>`, and make sure one draft PR exists
-   for the branch. Create it with `gh pr create --draft --base <base> --title ... --body ...` when it does
-   not exist. The PR body states what was implemented, the real commands you ran and their results, and
-   the deferred debt.
-4. Write `build.md` (format below) with `STATUS: READY` only when the branch is pushed and the tests you
+3. Commit with clear messages. Stage only the files you changed, by name: never `git add -A` or `git add .`.
+   Never commit `.claude/`, build output (`.build/`, `DerivedData/`, `.swiftpm/`), databases, caches or
+   `.DS_Store`. The gate refuses a branch that contains them. Run `git status` before every commit and check
+   that each listed file is one you meant to change. Restore `Package.resolved` and any other file a test
+   run rewrote, so it is not in the commit.
+4. Do not push and do not open a pull request. The factory pushes the branch and opens the PR itself after
+   the gate and every reviewer pass, so your commits are the whole handoff.
+5. Write `build.md` (format below) with `STATUS: READY` only when your commits are in place and the tests you
    ran pass. Otherwise `STATUS: BLOCKED`, with the reason under `## Blocked`.
 
 ## Phase: revise
@@ -122,7 +125,7 @@ The gate or the reviewers asked for changes. The findings are in the round folde
 
 1. Read those files. Fix only what they ask, plus the minimum needed to make the fix work. Route the fix
    to the specialist that owns the code when that is a larger change; you may do a one-line fix yourself.
-2. Commit, push to the same branch, and update the PR body if the scope or verification changed.
+2. Commit. Do not push or open a PR; the factory does that after the gate and reviewers pass.
 3. Rewrite `build.md` for this round.
 
 ## TDD and platform norms (strict)

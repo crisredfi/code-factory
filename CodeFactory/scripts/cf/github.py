@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from . import util
 
@@ -30,6 +31,13 @@ def create_issue(cfg: dict, title: str, body: str) -> int:
     url = util.gh("issue", "create", "--title", title, "--body", body,
                   "--label", cfg["github"]["queue_label"], *_in_repo()).strip()
     return int(url.rstrip("/").split("/")[-1])
+
+
+def create_pr(cfg: dict, branch: str, base: str, title: str, body_file: Path) -> str:
+    """Open a ready (not draft) PR from the job's branch. Returns its URL. Draft PRs cannot be merged."""
+    out = util.gh("pr", "create", *_in_repo(), "--base", base, "--head", branch,
+                  "--title", title, "--body-file", str(body_file))
+    return out.strip().splitlines()[-1]
 
 
 def merge_pr(pr_url: str, method: str) -> None:

@@ -94,8 +94,25 @@ def _note_heal(job_id: str, text: str) -> None:
         fh.write(f"{util.now()} {text}\n")
 
 
+def stage_key(st: dict, tag: str) -> str:
+    """Identifies one agent run in one stage of one round. Recorded on the job when that run succeeds."""
+    return f"{st['state']}|{st.get('phase')}|{st.get('round')}|{tag}"
+
+
+def _mark_done(job_id: str, key: str) -> None:
+    st = state.load_state(job_id)
+    done = st.setdefault("done", [])
+    if key not in done:
+        done.append(key)
+        state.save_state(st)
+
+
 def execute(job_id: str, items: list[dict], cfg: dict, dry: bool, out=print) -> None:
     """Run agent items in parallel, up to max_parallel_subtasks at a time.
+
+    An item that already succeeded in this stage and round is not run again, so a retry after a failure
+    only runs what failed. Every other item runs even when one of them fails; the failures are raised
+    together after the rest have finished and been recorded.
 
     Each item's model comes from the run profile (models.py), or from the config when the profile does not
     name its stage. A run the watchdog kills is retried, on the fallback model when one is set, up to
@@ -106,6 +123,7 @@ def execute(job_id: str, items: list[dict], cfg: dict, dry: bool, out=print) -> 
     profile = models.load_profile()
     heal = cfg["self_heal"]
     attempts = 1 + (heal["max_retries"] if heal["enabled"] else 0)
+    done = set(st.get("done", []))
 
     def one(it: dict):
         stage = it.get("stage", it["tag"])
@@ -124,10 +142,33 @@ def execute(job_id: str, items: list[dict], cfg: dict, dry: bool, out=print) -> 
                     raise watchdog.StuckAgent(f"{it['tag']} stuck after {attempt} attempt(s) on {spec}: {e}")
         raise AssertionError("unreachable")
 
+    todo = []
+    for it in items:
+        if not dry and stage_key(st, it["tag"]) in done:
+            out(f"  {it['tag']}: already done in this round, not run again")
+            continue
+        todo.append(it)
+
+    failures, stuck = [], None
     with cf.ThreadPoolExecutor(max_workers=max(1, cfg["max_parallel_subtasks"])) as ex:
-        for fut in cf.as_completed([ex.submit(one, it) for it in items]):
-            tag, res = fut.result()
+        futs = {ex.submit(one, it): it for it in todo}
+        for fut in cf.as_completed(futs):
+            it = futs[fut]
+            try:
+                tag, res = fut.result()
+            except watchdog.StuckAgent as e:
+                stuck = stuck or e
+                continue
+            except FactoryError as e:
+                failures.append(f"{it['tag']}: {e}")
+                continue
             out(f"  {tag}: {res}")
+            if not dry:
+                _mark_done(job_id, stage_key(st, it["tag"]))
+    if stuck is not None:
+        raise stuck
+    if failures:
+        raise FactoryError("; ".join(failures))
 
 
 def catalog_block(cfg: dict) -> str:

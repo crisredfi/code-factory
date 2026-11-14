@@ -8,6 +8,32 @@ from . import state, util
 from .util import FactoryError
 
 
+def is_local_state(path: str, patterns: list[str]) -> bool:
+    """True for files a tool writes into the checkout (agent memory, build output, Finder metadata).
+    A pattern ending in "/" matches a folder anywhere in the path; any other pattern matches a file name."""
+    name = path.rsplit("/", 1)[-1]
+    for p in patterns:
+        if p.endswith("/"):
+            if f"/{p}" in f"/{path}":
+                return True
+        elif name == p or path == p:
+            return True
+    return False
+
+
+def warnings_in(output: str) -> list[str]:
+    """Advisory lines from the checks output (a `WARN:` line, or a `warning:` line in the verify summary).
+    They are shown on the card and in checks.md; they never fail the gate."""
+    out = []
+    for line in output.splitlines():
+        s = line.strip()
+        if s.startswith("WARN:"):
+            out.append(s[len("WARN:"):].strip())
+        elif s.startswith("verify:") and "warning:" in s:
+            out.append(s.split("warning:", 1)[1].strip())
+    return out
+
+
 def target(cfg: dict) -> Path:
     if not cfg.get("target_repo"):
         raise FactoryError("set target_repo in factory.config.json first")
@@ -53,6 +79,9 @@ def run_gate(st: dict, cfg: dict) -> str:
                if any(f == p or f.startswith(p.rstrip("/") + "/") for p in cfg["protected_paths"])]
     if touched:
         problems.append("touches protected paths: " + ", ".join(touched))
+    local_state = [f for f in changed if is_local_state(f, cfg.get("local_state_paths", []))]
+    if local_state:
+        problems.append("commits local tool state, remove it from the commit: " + ", ".join(local_state))
     checks = target(cfg) / cfg["checks_command"]
     output = ""
     if not checks.exists():
@@ -69,7 +98,10 @@ def run_gate(st: dict, cfg: dict) -> str:
     verdict = "FAIL" if problems else "PASS"
     (rd / "checks.log").write_text(output)
     tail = "\n".join(output.splitlines()[-60:])
-    summary = "".join(f"- {p}\n" for p in problems) or "- checks passed\n"
+    warns = warnings_in(output)
+    summary = "".join(f"- {p}\n" for p in problems)
+    summary += "".join(f"- warning: {w}\n" for w in warns)
+    summary = summary or "- checks passed\n"
     (rd / "checks.md").write_text(f"GATE: {verdict}\nCOMMIT: {head}\n\n## Summary\n{summary}\n"
                                   f"## Output (tail)\n```\n{tail}\n```\n")
     return verdict

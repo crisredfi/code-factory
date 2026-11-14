@@ -105,7 +105,9 @@ def decide_build(st: dict, cfg: dict) -> tuple[str, str]:
         return "NEEDS_HUMAN", "builder blocked: " + (section(doc, "Blocked") or "see build.md")[:200]
     if status != "READY":
         raise FactoryError("build.md needs 'STATUS: READY | BLOCKED'")
-    st["pr_url"] = field(doc, "DRAFT_PR") or st.get("pr_url")
+    named = (field(doc, "DRAFT_PR").split() or [""])[0]  # first word, case kept: it is a URL
+    if named.startswith("https://"):  # anything else is prose, not a link
+        st["pr_url"] = named
     verdict = gate.run_gate(st, cfg)
     st["gate"] = verdict
     if verdict == "PASS":

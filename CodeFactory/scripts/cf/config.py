@@ -16,6 +16,8 @@ EDITABLE = {
     "github.comments": bool,
     "self_heal.enabled": bool,
     "self_heal.stuck_after_s": int,
+    "scheduler.enabled": bool,
+    "scheduler.interval_s": int,
 }
 
 

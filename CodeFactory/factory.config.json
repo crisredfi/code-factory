@@ -55,7 +55,8 @@
     "local_stuck_after_s": 1800,
     "max_run_s": 5400,
     "max_retries": 2,
-    "fallback_model": ""
+    "fallback_model": "",
+    "max_step_errors": 3
   },
   "stages": {
     "intake": {
@@ -137,7 +138,18 @@
     }
   },
   "auto_merge": {
-    "enabled": false,
-    "max_risk": "LOW"
+    "enabled": true,
+    "max_risk": "MEDIUM"
+  },
+  "local_state_paths": [
+    ".claude/",
+    ".build/",
+    "DerivedData/",
+    ".swiftpm/",
+    ".DS_Store"
+  ],
+  "scheduler": {
+    "enabled": true,
+    "interval_s": 300
   }
 }

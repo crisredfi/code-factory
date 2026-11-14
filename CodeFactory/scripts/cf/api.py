@@ -4,10 +4,13 @@ Long work (stepping a job, ticking) is started as a detached `factory.py` proces
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -30,8 +33,52 @@ def _read(st: dict, rel: str) -> str:
         return ""
 
 
+def _running(st: dict) -> bool:
+    """A run is live when a log in this job's folder was written in the last two minutes."""
+    d = state.job_dir(st["job_id"]) / "logs"
+    try:
+        newest = max((p.stat().st_mtime for p in d.glob("*.log")), default=0)
+    except OSError:
+        return False
+    return time.time() - newest < 120
+
+
+def _gate_of(st: dict, n: int):
+    doc = _read(st, f"round-{n}/checks.md")
+    if not doc:
+        return None
+    verdict = first_word(util.field(doc, "GATE"))
+    lines = [ln.strip()[2:] for ln in section(doc, "Summary").splitlines() if ln.strip().startswith("- ")]
+    return verdict, (lines[0] if lines else "")
+
+
+def attempts(st: dict) -> dict:
+    """Every attempt each stage made, round by round, kept after a later round passes. Read from the files
+    and the history, so a failed round stays visible when the retry succeeds."""
+    out = {"Build": [], "Gate": [], "Review": []}
+    for n in range(1, (st.get("round") or 0) + 1):
+        g = _gate_of(st, n)
+        if g:
+            verdict, detail = g
+            out["Gate"].append({"round": n, "status": "done" if verdict == "PASS" else "failed", "verdict": verdict,
+                                "detail": detail or verdict.lower(), "file": f"round-{n}/checks.md"})
+            out["Build"].append({"round": n, "status": "done", "detail": "built; gate ran", "file": "build.md"})
+        rd = state.job_dir(st["job_id"]) / f"round-{n}"
+        if rd.exists():
+            for f in sorted(rd.glob("review-*.md")):
+                v = first_word(util.field(f.read_text(), "VERDICT"))
+                name = f.stem.removeprefix("review-")
+                out["Review"].append({"round": n, "status": "done" if v == "PASS" else "failed", "verdict": v,
+                                      "name": name, "detail": f"{name}: {v or 'no verdict'}",
+                                      "file": f"round-{n}/{f.name}"})
+    for h in st.get("history", []):
+        if h["note"].startswith("builder blocked"):
+            out["Build"].insert(0, {"round": None, "status": "failed", "detail": h["note"][:160], "file": "build.md"})
+    return out
+
+
 def progress(st: dict) -> dict:
-    """One status per stage, and the reason a human should read first.
+    """One status per stage, the attempts behind it, and the reason a human should read first.
 
     Statuses: pending (not reached), active (running now), waiting (needs an outside action),
     done (passed), failed (stopped here). Built only from the job's state and files, never from logs.
@@ -40,6 +87,8 @@ def progress(st: dict) -> dict:
     build_doc = _read(st, "build.md")
     build_status = first_word(util.field(build_doc, "STATUS")) if build_doc else ""
     gate = st.get("gate")
+    rnd = st.get("round") or 0
+    att = attempts(st)
     reviews = {}
     try:
         for f in sorted(state.round_dir(st).glob("review-*.md")):
@@ -64,8 +113,11 @@ def progress(st: dict) -> dict:
             if s == "NEEDS_HUMAN" and gate is None: return "failed", "build did not reach the gate"
             return "done", ""
         if stage == "Gate":
-            if gate == "PASS" or s in PAST_REVIEW or s == "REVIEW": return "done", "PASS"
-            if gate == "FAIL": return "failed", "FAIL"
+            if gate == "PASS" or s in PAST_REVIEW or s == "REVIEW": return "done", "passed"
+            if gate == "FAIL":
+                if s == "BUILD" and st.get("phase") == "revise":
+                    return "failed", f"failed in round {rnd - 1}; builder retrying in round {rnd}"
+                return "failed", f"failed in round {rnd}"
             return "pending", ""
         if stage == "Review":
             if any(v == "BLOCK" for v in reviews.values()): return "failed", "BLOCK"
@@ -81,7 +133,7 @@ def progress(st: dict) -> dict:
     steps = []
     for name in STEP_NAMES:
         st_status, detail = status(name)
-        steps.append({"name": name, "status": st_status, "detail": detail})
+        steps.append({"name": name, "status": st_status, "detail": detail, "attempts": att.get(name, [])})
 
     reason = ""
     if s in {"NEEDS_HUMAN", "NEEDS_INFO", "SPLIT_REVIEW", "REJECTED"}:
@@ -92,7 +144,95 @@ def progress(st: dict) -> dict:
         if not reason and st.get("history"):
             reason = st["history"][-1]["note"]
     reason = " ".join(reason.split())[:600]
-    return {"steps": steps, "reason": reason}
+    return {"steps": steps, "reason": reason, "rounds": _rounds(st, att)}
+
+
+def _review_default(n: int, current: int, here: bool, st: dict, gate) -> str:
+    """Reviewers only run after a PASS gate. A failed gate skips them; that is not a missing record."""
+    if gate and gate["verdict"] != "PASS":
+        return "skipped"
+    if n < current:
+        return "unknown"
+    return "running" if here and st["state"] == "REVIEW" and gate else "pending"
+
+
+def _rounds(st: dict, att: dict) -> list[dict]:
+    """One row per round, like the original factory's card: the build, the gate, then each reviewer.
+    A round's row stays as it was decided, so a failed round stays red after a retry passes."""
+    current = st.get("round") or 0
+    live = st["state"] in ACTIVE
+    rows = []
+    for n in range(1, current + 1):
+        gate = next((a for a in att["Gate"] if a["round"] == n), None)
+        reviews = {a["name"]: a["verdict"] for a in att["Review"] if a["round"] == n}
+        here = n == current and live  # this is the round the job is working on now
+        if gate:
+            build, gate_cell = "done", gate["verdict"]
+        elif here and st["state"] == "BUILD":
+            build, gate_cell = "running", "pending"
+        elif n < current:  # a later round exists, so this one was built; its gate file is no longer on disk
+            build, gate_cell = "done", "unknown"
+        else:
+            build, gate_cell = "pending", "pending"
+        rows.append({
+            "round": n,
+            "build": build,
+            "gate": gate_cell,
+            "reviews": {name: reviews.get(name, _review_default(n, current, here, st, gate))
+                        for name in st.get("reviewers", [])},
+        })
+    return rows
+
+
+def _web_url(url):
+    """Only a real https link is a link on the card; anything else is text and not clickable."""
+    return url if isinstance(url, str) and url.startswith("https://") else None
+
+
+def _clock(iso: str) -> str:
+    try:
+        t = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return t.astimezone().strftime("%H:%M")
+    except (TypeError, ValueError):
+        return ""
+
+
+def next_action(st: dict, cfg: dict, sched: dict) -> str:
+    """One sentence on what happens next for this job, so a person never has to guess."""
+    s = st["state"]
+    rnd = st.get("round") or 0
+    lim = st.get("round_limit") or 0
+    err = st.get("last_error")
+    when = f" Next tick {_clock(sched['next_at'])}." if sched.get("next_at") and _clock(sched["next_at"]) else ""
+    if s == "QUEUED": return "Queued: starts when a slot is free."
+    if s == "NEEDS_INFO": return "Waiting for the author to answer the questions on the issue."
+    if s == "NEEDS_HUMAN": return "Needs you before it continues: read the reason, then send feedback, reject, or move it."
+    if s == "SPLIT_REVIEW": return "Needs you: review the drafted sub-issues, then create or cancel them."
+    if s == "MERGE_PENDING":
+        return ("PR is open. Auto-merge is on, so it merges on the next tick." if cfg["auto_merge"]["enabled"]
+                else "PR is open. Merge it when you are ready.")
+    if s == "COMPLETE": return "Done: merged."
+    if s == "REJECTED": return "Rejected."
+    if s in ACTIVE:
+        stage = {"INTAKE": "intake", "SPEC": "spec", "BUILD": "build", "REVIEW": "review"}[s]
+        if err:
+            limit = cfg.get("self_heal", {}).get("max_step_errors", 3)
+            return (f"Error in {stage} (attempt {st.get('error_streak', 0)} of {limit}): {err['message']}. "
+                    f"It retries on the next tick.{when}")
+        if s == "BUILD" and st.get("phase") == "revise" and st.get("gate") == "FAIL":
+            base = f"Gate failed in round {rnd - 1}. The builder is fixing it in round {rnd} of {lim}."
+        elif s == "BUILD" and st.get("phase") == "revise":
+            base = f"Reviewers asked for changes. The builder is fixing them in round {rnd} of {lim}."
+        elif s == "BUILD":
+            base = f"Builder working on round {rnd} of {lim}."
+        elif s == "REVIEW":
+            base = f"Reviewers are checking round {rnd} of {lim}."
+        else:
+            base = f"The {stage} stage is in progress."
+        if _running(st):
+            return base + " A run is live now."
+        return base + f" No run is live; the next tick continues it.{when}"
+    return ""
 
 
 def job_view(st: dict, cfg: dict) -> dict:
@@ -108,6 +248,9 @@ def job_view(st: dict, cfg: dict) -> dict:
     view["resumed_by_answer"] = view["last_note"] == "author answered the questions"
     view["reviewers"] = reviewer_list
     view.update(progress(st))
+    view["pr_url"] = _web_url(st.get("pr_url"))
+    view["next"] = next_action(st, cfg, queue.read_scheduler())
+    view["error"] = st.get("last_error")
     return view
 
 
@@ -122,6 +265,7 @@ def api_state(cfg: dict) -> dict:
             "reviewers_always": cfg["reviewers"]["always"], "auto_merge": cfg["auto_merge"],
             "target_repo": cfg.get("target_repo", ""), "base_branch": cfg["github"]["base_branch"],
         },
+        "scheduler": scheduler_status(cfg),
         "catalog": {
             "reviewers": {k: v["description"] for k, v in cfg["reviewers"]["catalog"].items()},
             "specialists": {k: v["description"] for k, v in cfg["agents"]["catalog"].items()},
@@ -248,10 +392,45 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": str(e)}, 400)
 
 
+def scheduler_status(cfg: dict) -> dict:
+    """What the tick panel shows: is a tick running, when the last one ran and what it did, and when the next is due."""
+    sc = queue.read_scheduler()
+    enabled = cfg.get("scheduler", {}).get("enabled", True)
+    next_at = sc.get("next_at") if enabled else None
+    overdue = False
+    if next_at:
+        try:
+            due = dt.datetime.fromisoformat(next_at.replace("Z", "+00:00"))
+            overdue = not queue.tick_running() and (dt.datetime.now(dt.timezone.utc) - due).total_seconds() > 90
+        except ValueError:
+            overdue = False
+    return {**sc, "enabled": enabled, "interval_s": cfg.get("scheduler", {}).get("interval_s", 300),
+            "next_at": next_at, "running": queue.tick_running(), "overdue": overdue}
+
+
+def _scheduler_loop(stop: threading.Event) -> None:
+    """Run a tick every scheduler.interval_s seconds, so retries and handoffs happen without a manual tick."""
+    while not stop.is_set():
+        cfg = config.load()
+        sc = cfg.get("scheduler", {})
+        interval = int(sc.get("interval_s", 300))
+        if sc.get("enabled", True):
+            try:
+                queue.run_tick(cfg, dry=False, out=lambda m: print(f"[scheduler] {m}", flush=True))
+            except Exception as e:  # keep the timer alive; the error is recorded in scheduler.json
+                print(f"[scheduler] tick failed: {e}", flush=True)
+            queue.write_scheduler(next_at=queue.iso_after(interval))
+        else:
+            queue.write_scheduler(next_at=None)
+        stop.wait(interval)
+
+
 def serve(port: int) -> None:
+    stop = threading.Event()
+    threading.Thread(target=_scheduler_loop, args=(stop,), daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"CodeFactory dashboard: http://127.0.0.1:{port}/  (Ctrl-C to stop)")
+    print(f"CodeFactory dashboard: http://127.0.0.1:{port}/  (scheduler on, Ctrl-C to stop)")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        pass
+        stop.set()
