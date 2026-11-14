@@ -74,9 +74,10 @@ def _run_stage_once(job_id: str, it: dict, spec: str, prompt: str, cwd, log: Pat
     """One attempt. A local model is loaded (and the LM Studio lock held) before its agent runs."""
     watch = {"worktree": cwd and str(cwd), "job_dir": state.job_dir(job_id)}
     if dry or not models.is_local(spec):
-        # Claude runs never get the local compaction window, even if the shell exports it.
+        # Claude runs never get the local window settings, even if the shell exports them.
         cloud_env = dict(os.environ)
         cloud_env.pop(models.COMPACT_ENV, None)
+        cloud_env.pop(models.WINDOW_ENV, None)
         return run_agent(prompt, spec, cwd, log, cfg, dry, env=cloud_env, watch=watch, job_dir=watch["job_dir"])
     with models.local_turn(cfg, spec, log=lambda msg: out(f"  {it['tag']}: {msg}")) as lm:
         watch |= {"local": True, "local_up": lm.healthy}

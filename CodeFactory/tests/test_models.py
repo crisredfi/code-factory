@@ -223,6 +223,14 @@ class LocalLoading(Env):
         self.assertEqual(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "200000")
         self.assertNotIn("ANTHROPIC_API_KEY", env)
 
+    def test_local_child_declares_the_real_window_and_shell_value_is_dropped(self):
+        self.cfg["models"]["local"]["context_length"] = 262144
+        env = models.LMStudio(self.cfg).child_env({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"})
+        self.assertEqual(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "262144")
+        self.cfg["models"]["local"].pop("context_length", None)
+        env = models.LMStudio(self.cfg).child_env({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"})
+        self.assertNotIn("CLAUDE_CODE_MAX_CONTEXT_TOKENS", env)
+
     def test_no_compaction_window_is_set_when_unconfigured(self):
         self.cfg["models"]["local"].pop("auto_compact_window", None)
         env = models.LMStudio(self.cfg).child_env({"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "999"})

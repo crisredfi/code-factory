@@ -28,6 +28,7 @@ from .util import FactoryError
 
 LOCAL_PREFIX = "local:"
 COMPACT_ENV = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"  # read by Claude Code; set only for local children
+WINDOW_ENV = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"    # the real window of a model Claude Code does not recognise
 STAGES = ["intake", "spec", "build", "specialists", "review"]  # review.<reviewer> is also allowed
 
 
@@ -192,8 +193,12 @@ class LMStudio:
         env = dict(base_env)
         env.pop("ANTHROPIC_API_KEY", None)
         env.pop(COMPACT_ENV, None)
+        env.pop(WINDOW_ENV, None)
         env["ANTHROPIC_BASE_URL"] = self.base
         env["ANTHROPIC_AUTH_TOKEN"] = self.token
+        # Claude Code does not know a local model id, so it assumes a 1M window unless told the real one.
+        if self.context_length:
+            env[WINDOW_ENV] = str(self.context_length)
         if self.auto_compact_window:
             env[COMPACT_ENV] = str(self.auto_compact_window)
         return env
