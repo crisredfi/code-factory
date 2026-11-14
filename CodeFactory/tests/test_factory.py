@@ -116,11 +116,13 @@ class QueueTests(Base):
                    issue(2, "p0", ["factory", "priority:P0"]),
                    issue(3, "p2", ["factory"]),
                    issue(4, "child", ["factory"], body="Parent: #9\nDepends on: #1\n")])
-        queue.next_jobs(self.cfg_now())
+        cfg = self.cfg_now()
+        cfg["max_parallel_jobs"] = 2  # fixed here: the test must not depend on the machine's own setting
+        queue.next_jobs(cfg)
         self.assertEqual(state.load_state("issue-2")["state"], "INTAKE")
         self.assertEqual(state.load_state("issue-3")["state"], "INTAKE")
         self.assertEqual(state.load_state("issue-1")["state"], "QUEUED")
-        self.assertIn("capacity full", queue.next_jobs(self.cfg_now())[0])
+        self.assertIn("capacity full", queue.next_jobs(cfg)[0])
 
     def test_move_swaps_and_adopts_priority(self):
         self.sync([issue(1, "a", ["factory", "priority:P1"]), issue(2, "b", ["factory", "priority:P2"])])
@@ -213,6 +215,26 @@ class FullFlow(Base):
         with self.assertRaises(util.FactoryError):
             steps.apply("issue-7", self.cfg_now())
 
+    def _plan_with_spec(self, spec: str, plan: dict):
+        self.write("issue-7", "intake.md", "DECISION: ACCEPT\nRISK: LOW\nSCOPE: small\n")
+        steps.apply("issue-7", self.cfg_now())
+        self.write("issue-7", "spec.md", spec)
+        steps.apply("issue-7", self.cfg_now())
+        self.write("issue-7", "build/plan.json", json.dumps(plan))
+        return steps.apply("issue-7", self.cfg_now())
+
+    def test_plan_that_drops_a_criterion_is_refused(self):
+        with self.assertRaises(util.FactoryError) as ctx:
+            self._plan_with_spec("- [ ] AC-1: a\n- [ ] AC-2: b\n", {"mode": "single", "subtasks": [
+                {"id": "s1", "specialist": "ios-engineer", "depends_on": [], "covers": ["AC-1"]}]})
+        self.assertIn("AC-2", str(ctx.exception))
+
+    def test_criterion_listed_as_unassigned_is_accepted(self):
+        to, _ = self._plan_with_spec("- [ ] AC-1: a\n- [ ] AC-2: b\n", {"mode": "single", "subtasks": [
+            {"id": "s1", "specialist": "ios-engineer", "depends_on": [], "covers": ["AC-1"]}],
+            "unassigned": [{"criterion": "AC-2", "why": "no specialist fits"}]})
+        self.assertEqual(to, "BUILD")
+
     def test_split_goes_to_review_and_approve_dry_run_lists_issues(self):
         self.write("issue-7", "intake.md", "DECISION: ACCEPT\nRISK: LOW\nSCOPE: large\n")
         steps.apply("issue-7", self.cfg_now())
@@ -235,7 +257,7 @@ class FullFlow(Base):
         self.write("issue-7", "spec.md", "- [ ] AC-1: x\n")
         steps.apply("issue-7", self.cfg_now())
         self.write("issue-7", "build/plan.json", json.dumps({"mode": "single", "subtasks": [
-            {"id": "s1", "specialist": "backend-engineer", "depends_on": []}]}))
+            {"id": "s1", "specialist": "backend-engineer", "depends_on": [], "covers": ["AC-1"]}]}))
         steps.apply("issue-7", self.cfg_now())  # plan accepted -> subtasks
         self.assertEqual(state.load_state("issue-7")["phase"], "subtasks")
         self.commit_in_worktree("issue-7")
@@ -555,6 +577,58 @@ class Dashboard(Base):
         html = (REAL / "dashboard" / "index.html").read_text()
         for needle in ["data-move", "data-prio", "data-rev", "data-split", "Settings", "/api/tick", "answered"]:
             self.assertIn(needle, html)
+
+
+class FeedbackReachesTheBuilder(unittest.TestCase):
+    """Regression: feedback-*.md was written by `feedback` but never listed in the builder's prompt."""
+
+    def test_feedback_file_is_listed_for_the_agent(self):
+        import tempfile
+        from cf import agents, state
+        with tempfile.TemporaryDirectory() as tmp:
+            jd = Path(tmp) / "job"
+            jd.mkdir()
+            (jd / "feedback-1.md").write_text("# Feedback 1\n\nfix the compile error\n")
+            saved = state.job_dir
+            state.job_dir = lambda job_id: jd
+            try:
+                st = {"job_id": "x", "branch": "b", "worktree": None, "issue": 1, "round": 2, "round_limit": 4}
+                prompt = agents.build_prompt(st, config.load(), "factory-builder", "build.md")
+            finally:
+                state.job_dir = saved
+        self.assertIn("feedback-1.md", prompt)
+
+
+class GithubRepoIsPassed(unittest.TestCase):
+    """Regression: comments and issues went to the factory's own repo because -R was missing."""
+
+    def test_issue_calls_pass_the_configured_repo(self):
+        from cf import github
+        calls = []
+        saved = (util.gh, github.REPO)
+        util.gh = lambda *a: (calls.append(list(a)), "[]" if "list" in a else "https://github.com/o/r/issues/7\n")[1]
+        try:
+            github.set_repo({"github": {"repo": "crisredfi/Doomail"}})
+            github.post_comment("issue", 411, "<!-- factory -->\nhi")
+            github.create_issue({"github": {"queue_label": "factory"}}, "t", "b")
+            github.fetch_issues({"github": {"queue_label": "factory"}})
+        finally:
+            util.gh, github.REPO = saved
+        for call in calls:
+            self.assertIn("-R", call)
+            self.assertEqual(call[call.index("-R") + 1], "crisredfi/Doomail")
+
+    def test_no_repo_configured_adds_no_flag(self):
+        from cf import github
+        calls = []
+        saved = (util.gh, github.REPO)
+        util.gh = lambda *a: (calls.append(list(a)), "")[1]
+        try:
+            github.set_repo({"github": {"repo": ""}})
+            github.post_comment("issue", 1, "<!-- factory -->\nhi")
+        finally:
+            util.gh, github.REPO = saved
+        self.assertNotIn("-R", calls[0])
 
 
 if __name__ == "__main__":

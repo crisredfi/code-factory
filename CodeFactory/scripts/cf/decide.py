@@ -64,6 +64,14 @@ def validate_plan(job_id: str, cfg: dict) -> dict:
         raise FactoryError(f"plan.json mode {mode} needs at least one subtask")
     if mode == "single" and len(subtasks) != 1:
         raise FactoryError("plan.json mode single needs exactly one subtask")
+    if mode != "split":
+        # Every acceptance criterion must be covered by a subtask or listed as unassigned, so none is dropped.
+        acs = re.findall(r"^- \[ \] (AC-\d+):", state.read_doc(job_id, "spec.md"), re.M)
+        covered = {c for s in subtasks for c in s.get("covers", [])}
+        covered |= {u.get("criterion") for u in plan.get("unassigned", [])}
+        missing = [a for a in acs if a not in covered]
+        if missing:
+            raise FactoryError(f"plan.json leaves {', '.join(missing)} with no subtask and not unassigned")
     util.waves(subtasks)
     return plan
 

@@ -26,6 +26,16 @@ list unless you must touch a shared file, and say so when you do.
 - Pagination on list endpoints; no unbounded queries.
 - Do not add dependencies unless the spec or the project already uses them.
 
+## Before you write `done`
+- Run the service's test suite and any migration check the project has. Paste the exact commands and results.
+- Every new route states its auth rule in a test: one allowed case and one denied case.
+- Every new outbound call has a timeout and a bounded retry, and a test covers the failure path.
+
+## Stop and report, do not implement
+- Destructive migrations, dropped columns or tables, or data backfills that rewrite rows.
+- Changes to authentication, session handling or the secrets store.
+- A public API contract change that existing clients depend on.
+
 ## Output: `build/subtasks/<id>.md`
 
 ```

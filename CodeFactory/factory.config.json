@@ -42,7 +42,9 @@
       "command": "lms",
       "base_url": "http://localhost:1234",
       "auth_token": "lmstudio",
-      "unload_others": true
+      "unload_others": true,
+      "context_length": 262144,
+      "auto_compact_window": 200000
     }
   },
   "self_heal": {
@@ -65,7 +67,7 @@
       "model": "claude-opus-5-5"
     },
     "build": {
-      "agent": "builder",
+      "agent": "factory-builder",
       "model": "claude-opus-5-5"
     }
   },
@@ -114,19 +116,23 @@
     "catalog": {
       "ios-engineer": {
         "model": "claude-sonnet-5-5",
-        "description": "Swift / SwiftUI code under the project's platform norms"
+        "description": "Swift / SwiftUI code under the project's platform norms",
+        "use_when": "the work is Swift or SwiftUI code in an app target: views, view models, app state, UI strings"
       },
       "backend-engineer": {
         "model": "claude-sonnet-5-5",
-        "description": "APIs, services, jobs, data access"
+        "description": "APIs, services, jobs, data access",
+        "use_when": "the work is server-side: HTTP routes, handlers, services, jobs, queues, database access, migrations, API contracts"
       },
       "os-engineer": {
         "model": "claude-sonnet-5-5",
-        "description": "Scripts, CI, tooling, daemons, file-system and process code"
+        "description": "Scripts, CI, tooling, daemons, file-system and process code",
+        "use_when": "the work is tooling or platform plumbing: shell scripts, Makefiles, CI workflows, build phases, launch agents, file watchers, process supervision, paths and permissions"
       },
       "test-engineer": {
         "model": "claude-sonnet-5-5",
-        "description": "Test scaffolding, fixtures, coverage of acceptance criteria"
+        "description": "Test scaffolding, fixtures, coverage of acceptance criteria",
+        "use_when": "the work is tests across layers: fixtures, test doubles, coverage of acceptance criteria, or a criterion that only needs a test to exist"
       }
     }
   },

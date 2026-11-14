@@ -13,7 +13,86 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import config, github, lifecycle, paths, queue, reviewers, state
 from .model import COLUMNS, ACTIVE
-from .util import FactoryError
+from . import util
+from .util import FactoryError, first_word, section
+
+
+STEP_NAMES = ["Intake", "Spec", "Build", "Gate", "Review", "Merge"]
+BEFORE_SPEC = {"QUEUED", "INTAKE", "NEEDS_INFO"}
+BEFORE_BUILD = BEFORE_SPEC | {"SPEC"}
+PAST_REVIEW = {"MERGE_PENDING", "COMPLETE"}
+
+
+def _read(st: dict, rel: str) -> str:
+    try:
+        return state.read_doc(st["job_id"], rel)
+    except (OSError, FactoryError):
+        return ""
+
+
+def progress(st: dict) -> dict:
+    """One status per stage, and the reason a human should read first.
+
+    Statuses: pending (not reached), active (running now), waiting (needs an outside action),
+    done (passed), failed (stopped here). Built only from the job's state and files, never from logs.
+    """
+    s = st["state"]
+    build_doc = _read(st, "build.md")
+    build_status = first_word(util.field(build_doc, "STATUS")) if build_doc else ""
+    gate = st.get("gate")
+    reviews = {}
+    try:
+        for f in sorted(state.round_dir(st).glob("review-*.md")):
+            reviews[f.stem] = first_word(util.field(f.read_text(), "VERDICT"))
+    except OSError:
+        pass
+
+    def status(stage: str) -> tuple[str, str]:
+        if stage == "Intake":
+            if s == "QUEUED": return "pending", ""
+            if s == "INTAKE": return "active", ""
+            if s == "NEEDS_INFO": return "waiting", "waiting for the author on the issue"
+            return "done", ""
+        if stage == "Spec":
+            if s in BEFORE_SPEC: return "pending", ""
+            if s == "SPEC": return "active", ""
+            return "done", ""
+        if stage == "Build":
+            if s in BEFORE_BUILD: return "pending", ""
+            if s == "BUILD": return "active", ""
+            if s == "NEEDS_HUMAN" and build_status == "BLOCKED": return "failed", "builder blocked"
+            if s == "NEEDS_HUMAN" and gate is None: return "failed", "build did not reach the gate"
+            return "done", ""
+        if stage == "Gate":
+            if gate == "PASS" or s in PAST_REVIEW or s == "REVIEW": return "done", "PASS"
+            if gate == "FAIL": return "failed", "FAIL"
+            return "pending", ""
+        if stage == "Review":
+            if any(v == "BLOCK" for v in reviews.values()): return "failed", "BLOCK"
+            if s == "REVIEW": return "active", ""
+            if s in PAST_REVIEW: return "done", ""
+            return "pending", ""
+        if stage == "Merge":
+            if s == "MERGE_PENDING": return "waiting", "ready to merge"
+            if s == "COMPLETE": return "done", ""
+            return "pending", ""
+        return "pending", ""
+
+    steps = []
+    for name in STEP_NAMES:
+        st_status, detail = status(name)
+        steps.append({"name": name, "status": st_status, "detail": detail})
+
+    reason = ""
+    if s in {"NEEDS_HUMAN", "NEEDS_INFO", "SPLIT_REVIEW", "REJECTED"}:
+        if build_status == "BLOCKED":
+            reason = section(build_doc, "Blocked")
+        if not reason and gate == "FAIL":
+            reason = section(_read(st, f"round-{st['round']}/checks.md"), "Summary")
+        if not reason and st.get("history"):
+            reason = st["history"][-1]["note"]
+    reason = " ".join(reason.split())[:600]
+    return {"steps": steps, "reason": reason}
 
 
 def job_view(st: dict, cfg: dict) -> dict:
@@ -28,6 +107,7 @@ def job_view(st: dict, cfg: dict) -> dict:
     view["last_note"] = st["history"][-1]["note"] if st.get("history") else ""
     view["resumed_by_answer"] = view["last_note"] == "author answered the questions"
     view["reviewers"] = reviewer_list
+    view.update(progress(st))
     return view
 
 

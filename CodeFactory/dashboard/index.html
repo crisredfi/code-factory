@@ -55,7 +55,17 @@
 
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; margin-bottom: 10px; }
   .card.live { border-color: color-mix(in srgb, var(--active) 45%, var(--line)); }
-  .card.human { border-color: var(--human); }
+  .card.human { border: 2px solid var(--human); background: color-mix(in srgb, var(--human) 7%, var(--card)); }
+  .steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; margin: 8px 0 6px; }
+  .step { font-family: var(--mono); font-size: 10px; text-align: center; padding: 3px 0; border-radius: 5px; border: 1px solid var(--line); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .step small { display: block; font-size: 9px; opacity: .9; }
+  .step.st-done { background: var(--pass); border-color: var(--pass); color: #0b1f10; font-weight: 600; }
+  .step.st-failed { background: var(--human); border-color: var(--human); color: #fff; font-weight: 700; }
+  .step.st-active { border-color: var(--active); color: var(--active); background: color-mix(in srgb, var(--active) 14%, transparent); }
+  .step.st-waiting { border-color: var(--changes); color: var(--changes); background: color-mix(in srgb, var(--changes) 14%, transparent); }
+  .step.st-pending { color: var(--faint); border-style: dashed; }
+  .reason { margin: 6px 0; padding: 7px 9px; border-radius: 7px; border-left: 4px solid var(--human); background: color-mix(in srgb, var(--human) 12%, transparent); font-size: 12px; line-height: 1.4; }
+  .reason b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--human); margin-bottom: 2px; }
   .card .top { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
   .card .title { font-size: 13px; line-height: 1.3; margin: 2px 0 6px; cursor: pointer; }
   .card .title:hover { text-decoration: underline; }
@@ -238,6 +248,12 @@ function actionsFor(j) {
   return b.join('')
 }
 
+const STEP_MARK = { done: '✓', failed: '✗', active: '…', waiting: '⏸', pending: '·' }
+function stepChip(s) {
+  const detail = s.detail ? `<small>${esc(s.detail)}</small>` : ''
+  return `<div class="step st-${s.status}" title="${esc(s.name)}: ${esc(s.status)}${s.detail ? ' (' + esc(s.detail) + ')' : ''}">${STEP_MARK[s.status] || ''} ${esc(s.name)}${detail}</div>`
+}
+
 function card(j) {
   const answer = j.state === 'NEEDS_INFO'
     ? (j.answered ? 'author replied: resumes on next sync or tick' : 'waiting for the author on the issue')
@@ -259,6 +275,8 @@ function card(j) {
       ${j.children?.length ? `<span>${j.children.length} sub-issues</span>` : ''}
       ${j.blocked_by?.length && j.state === 'QUEUED' ? `<span>waits for #${j.blocked_by.join(', #')}</span>` : ''}
     </div>
+    <div class="steps">${(j.steps || []).map(stepChip).join('')}</div>
+    ${j.reason ? `<div class="reason"><b>${j.state === 'NEEDS_HUMAN' ? 'Why it stopped' : 'Reason'}</b>${esc(j.reason)}</div>` : ''}
     ${flag ? `<div class="hint">${flag}</div>` : ''}${hint ? `<div class="hint">${hint}</div>` : ''}
     <div class="actions">${actionsFor(j)}</div>
   </article>`

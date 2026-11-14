@@ -33,6 +33,16 @@ You implement exactly one subtask from `build/plan.json` (given to you below). S
 - Keep views small. Extract a subview when `body` grows past one screen.
 - Do not add third-party dependencies unless the spec or the project already uses that package.
 
+## Before you write `done`
+- Build the app target and run the unit tests you touched. Paste the exact command and result line.
+- No new compiler warnings in code you wrote. No force unwraps added (grep your diff for `!`).
+- Every new user-facing string goes through the String Catalog, and every new control has an accessibility label.
+
+## Stop and report, do not implement
+- Entitlements, Info.plist usage strings, signing or provisioning changes.
+- A new Swift package or third-party dependency.
+- A SwiftData or Core Data schema change that needs a migration.
+
 ## Output: `build/subtasks/<id>.md`
 
 ```

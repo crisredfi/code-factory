@@ -27,6 +27,7 @@ def build_prompt(st: dict, cfg: dict, agent: str, output_rel: str, extra: str = 
     files = [f for f in ["issue.md", "intake.md", "spec.md", "build.md", "build/plan.json", "build/split.json"]
              if (jd / f).exists()]
     files += [p.name for p in sorted(jd.glob("intake-*.md"))]
+    files += [p.name for p in sorted(jd.glob("feedback-*.md"))]  # human feedback sent from NEEDS_HUMAN
     if st.get("round"):
         for n in sorted({st["round"], st["round"] - 1}):
             d = jd / f"round-{n}"
@@ -49,9 +50,15 @@ def build_prompt(st: dict, cfg: dict, agent: str, output_rel: str, extra: str = 
 
 
 def run_agent(prompt: str, model: str, cwd, log: Path, cfg: dict, dry: bool,
-              env: dict | None = None, watch: dict | None = None) -> str:
-    """Run one `claude -p` agent. Raises watchdog.Stuck if the watchdog killed it for making no progress."""
+              env: dict | None = None, watch: dict | None = None, job_dir: Path | None = None) -> str:
+    """Run one `claude -p` agent. Raises watchdog.Stuck if the watchdog killed it for making no progress.
+
+    The agent's working directory is the target repo or the job's worktree. The job folder lives outside it,
+    so it is added explicitly with --add-dir. Without that the runner refuses to read or write the job's files.
+    """
     cmd = [cfg["runner"]["command"], "-p", "--model", model, *cfg["runner"].get("extra_args", [])]
+    if job_dir is not None:
+        cmd += ["--add-dir", str(job_dir)]
     if dry:
         return f"DRY RUN: {' '.join(cmd)} (prompt {len(prompt)} chars, cwd {cwd or '.'})"
     if not shutil.which(cmd[0]):
@@ -68,11 +75,15 @@ def _run_stage_once(job_id: str, it: dict, spec: str, prompt: str, cwd, log: Pat
     """One attempt. A local model is loaded (and the LM Studio lock held) before its agent runs."""
     watch = {"worktree": cwd and str(cwd), "job_dir": state.job_dir(job_id)}
     if dry or not models.is_local(spec):
-        return run_agent(prompt, spec, cwd, log, cfg, dry, watch=watch)
+        # Claude runs never get the local window settings, even if the shell exports them.
+        cloud_env = dict(os.environ)
+        cloud_env.pop(models.COMPACT_ENV, None)
+        cloud_env.pop(models.WINDOW_ENV, None)
+        return run_agent(prompt, spec, cwd, log, cfg, dry, env=cloud_env, watch=watch, job_dir=watch["job_dir"])
     with models.local_turn(cfg, spec, log=lambda msg: out(f"  {it['tag']}: {msg}")) as lm:
         watch |= {"local": True, "local_up": lm.healthy}
         return run_agent(prompt, models.local_key(spec), cwd, log, cfg, dry,
-                         env=lm.child_env(dict(os.environ)), watch=watch)
+                         env=lm.child_env(dict(os.environ)), watch=watch, job_dir=watch["job_dir"])
 
 
 def _note_heal(job_id: str, text: str) -> None:
@@ -119,6 +130,17 @@ def execute(job_id: str, items: list[dict], cfg: dict, dry: bool, out=print) -> 
             out(f"  {tag}: {res}")
 
 
+def catalog_block(cfg: dict) -> str:
+    """The specialists the build lead may deploy, with the signals that route work to each one.
+    Injected into the plan prompt so the model never has to guess a name."""
+    lines = ["Specialist catalog (the only names you may use in plan.json):"]
+    for name, spec in cfg["agents"]["catalog"].items():
+        lines.append(f"- {name}: {spec['description']}")
+        if spec.get("use_when"):
+            lines.append(f"  use when: {spec['use_when']}")
+    return "\n".join(lines)
+
+
 def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list[dict]:
     """Agent items for one stage key: intake | spec | build | review.<name>."""
     if key.startswith("review."):
@@ -130,9 +152,10 @@ def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list
     stage = cfg["stages"][key]
     if key == "build":
         notes = {
-            "plan": ("Phase: plan. Decide the mode (single | subtasks | split) and pick specialists only from "
-                     "the catalog in your prompt. Write build/plan.json. For mode split, also write build/split.json "
-                     "and set build.md to STATUS: SPLIT."),
+            "plan": ("Phase: plan. Detect the layer of each acceptance criterion, decide the mode "
+                     "(single | subtasks | split), and pick specialists only from the catalog below. Write "
+                     "build/plan.json. For mode split, also write build/split.json and set build.md to "
+                     "STATUS: SPLIT.\n\n" + catalog_block(cfg)),
             "integrate": ("Phase: integrate. Read build/subtasks/*.md, finish the work, commit, push, make sure the "
                           "draft PR exists, and write build.md with STATUS: READY or BLOCKED."),
             "revise": (f"Phase: revise. Read round-{st['round'] - 1}/checks.md and any review-*.md there and fix "

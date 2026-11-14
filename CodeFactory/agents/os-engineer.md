@@ -28,6 +28,15 @@ process supervision, and cross-platform path or permission handling.
 - Least privilege: request the minimum entitlements, permissions and file modes.
 - Idempotent scripts: running twice must be safe.
 
+## Before you write `done`
+- Run each script twice in a row and confirm the second run changes nothing (idempotence).
+- Run the script with a dry-run flag or in a temporary directory, never against the real home or the repo root.
+- `shellcheck` on every shell script you touched, if the project has it. Paste the result.
+
+## Stop and report, do not implement
+- Changes to signing, notarisation, release workflows or secrets handling in CI.
+- Anything that deletes, moves or overwrites files outside the job folder and the worktree.
+
 ## Output: `build/subtasks/<id>.md`
 
 ```

@@ -25,6 +25,15 @@ actually fail.
   wrong, fix the test and say why in the output.
 - Mutation check: for each criterion, state one plausible bug the test would catch.
 
+## Before you write `done`
+- Run the suite twice in a row. A test that passes once and fails the second time is not done: fix the cause, report it.
+- Each test you add fails for the right reason before the implementation exists. Say how you checked.
+- No test waits on a real clock, a real network or a real Keychain. If one needs them, report it instead.
+
+## Stop and report, do not implement
+- A test that can only pass against live services or real user data.
+- Changes to the test runner configuration or CI test selection.
+
 ## Output: `build/subtasks/<id>.md`
 
 ```

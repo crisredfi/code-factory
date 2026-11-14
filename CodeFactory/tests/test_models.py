@@ -208,8 +208,33 @@ class LocalLoading(Env):
                                          "loaded": ["qwen3.6-35b-a3b-splash"]})
         self.lm().ensure_loaded("qwen3.8-27b-splash")
         calls = [c for c in self.lms_calls() if c.startswith(("load", "unload"))]
-        self.assertEqual(calls, ["unload qwen3.6-35b-a3b-splash", "load qwen3.8-27b-splash -y"])
+        self.assertEqual(calls, ["unload qwen3.6-35b-a3b-splash", "load qwen3.8-27b-splash -y -c 262144"])
         self.assertEqual(self.lms_loaded(), ["qwen3.8-27b-splash"])
+
+    def test_load_passes_no_context_flag_when_unset(self):
+        self.cfg["models"]["local"].pop("context_length", None)
+        self.lm().ensure_loaded("qwen3.6-35b-a3b-splash")
+        self.assertIn("load qwen3.6-35b-a3b-splash -y", self.lms_calls())
+
+    def test_local_child_gets_the_compaction_window_and_cloud_does_not(self):
+        self.cfg["models"]["local"]["auto_compact_window"] = 200000
+        shell = {"ANTHROPIC_API_KEY": "sk-test", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "999"}
+        env = models.LMStudio(self.cfg).child_env(shell)
+        self.assertEqual(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "200000")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+    def test_local_child_declares_the_real_window_and_shell_value_is_dropped(self):
+        self.cfg["models"]["local"]["context_length"] = 262144
+        env = models.LMStudio(self.cfg).child_env({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"})
+        self.assertEqual(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "262144")
+        self.cfg["models"]["local"].pop("context_length", None)
+        env = models.LMStudio(self.cfg).child_env({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"})
+        self.assertNotIn("CLAUDE_CODE_MAX_CONTEXT_TOKENS", env)
+
+    def test_no_compaction_window_is_set_when_unconfigured(self):
+        self.cfg["models"]["local"].pop("auto_compact_window", None)
+        env = models.LMStudio(self.cfg).child_env({"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "999"})
+        self.assertNotIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW", env)
 
     def test_leaves_others_loaded_when_unload_others_is_off(self):
         util.write_json(self.lms_state, {"installed": ["qwen3.6-35b-a3b-splash", "qwen3.8-27b-splash"],
@@ -262,6 +287,21 @@ class AgentsUseTheProfile(Env):
         agents.execute("issue-1", self.items(model="claude-haiku-5-5", pinned=True), self.cfg, dry=False,
                        out=lambda *a: None)
         self.assertEqual(self.claude_calls()[-1]["argv"][:3], ["-p", "--model", "claude-haiku-5-5"])
+
+    def test_the_job_folder_is_added_to_the_agents_directories(self):
+        """Regression: the runner refused to read the job folder, which lives outside the target repo."""
+        self.new_job()
+        agents.execute("issue-1", self.items(), self.cfg, dry=False, out=lambda *a: None)
+        argv = self.claude_calls()[-1]["argv"]
+        self.assertIn("--add-dir", argv)
+        self.assertEqual(argv[argv.index("--add-dir") + 1], str(state.job_dir("issue-1")))
+
+    def test_the_job_folder_is_added_for_local_runs_too(self):
+        self.new_job()
+        models.set_stages(["intake=local:qwen3.6-35b-a3b-splash"], self.cfg)
+        agents.execute("issue-1", self.items(), self.cfg, dry=False, out=lambda *a: None)
+        argv = self.claude_calls()[-1]["argv"]
+        self.assertEqual(argv[argv.index("--add-dir") + 1], str(state.job_dir("issue-1")))
 
     def test_dry_run_names_the_profile_model_and_does_not_touch_lm_studio(self):
         self.new_job()
