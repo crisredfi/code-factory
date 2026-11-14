@@ -58,6 +58,29 @@ def ensure_worktree(st: dict, cfg: dict) -> Path:
     return wt
 
 
+def drop_local_state(wt: Path, base: str, patterns: list[str]) -> list[str]:
+    """Take local tool state out of the job's branch with one new commit. The files stay on disk.
+
+    The factory does this itself, because the local builder models did not do it when told to. It only
+    commits when the staged change is exactly the removal of local-state paths, so no other work is swept in.
+    Returns the paths it removed (empty when there were none). Raises FactoryError if it cannot do so safely.
+    """
+    git = util.git
+    changed = git(wt, "diff", "--name-only", f"origin/{base}...HEAD").split()
+    paths = [f for f in changed if is_local_state(f, patterns)]
+    if not paths:
+        return []
+    if git(wt, "diff", "--cached", "--name-only").strip():
+        raise FactoryError("cannot remove local tool state: the worktree already has staged changes")
+    git(wt, "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *paths)
+    staged = git(wt, "diff", "--cached", "--name-only").split()
+    if not staged or any(not is_local_state(f, patterns) for f in staged):
+        git(wt, "reset", "-q")
+        raise FactoryError(f"cannot remove local tool state safely; staged: {', '.join(staged) or 'nothing'}")
+    git(wt, "commit", "-q", "-m", "Remove local tool state from the branch")
+    return sorted(set(paths))
+
+
 def run_gate(st: dict, cfg: dict) -> str:
     """Branch hygiene, protected paths, then the base checkout's checks script. Writes round-N/checks.md."""
     base = cfg["github"]["base_branch"]
@@ -68,6 +91,11 @@ def run_gate(st: dict, cfg: dict) -> str:
     rd.mkdir(parents=True, exist_ok=True)
     problems: list[str] = []
     git = util.git
+    removed = []
+    try:
+        removed = drop_local_state(wt, base, cfg.get("local_state_paths", []))
+    except FactoryError as e:
+        problems.append(str(e))
     head = git(wt, "rev-parse", "HEAD").strip()
     if git(wt, "status", "--porcelain").strip():
         problems.append("the worktree has uncommitted changes")
@@ -81,7 +109,8 @@ def run_gate(st: dict, cfg: dict) -> str:
         problems.append("touches protected paths: " + ", ".join(touched))
     local_state = [f for f in changed if is_local_state(f, cfg.get("local_state_paths", []))]
     if local_state:
-        problems.append("commits local tool state, remove it from the commit: " + ", ".join(local_state))
+        problems.append("commits local tool state: " + ", ".join(local_state) + ". The factory removes "
+                        "these before the gate. Do not run git rm yourself.")
     checks = target(cfg) / cfg["checks_command"]
     output = ""
     if not checks.exists():
@@ -101,6 +130,8 @@ def run_gate(st: dict, cfg: dict) -> str:
     warns = warnings_in(output)
     summary = "".join(f"- {p}\n" for p in problems)
     summary += "".join(f"- warning: {w}\n" for w in warns)
+    if removed:
+        summary += f"- removed local tool state from the branch (kept on disk): {', '.join(removed)}\n"
     summary = summary or "- checks passed\n"
     (rd / "checks.md").write_text(f"GATE: {verdict}\nCOMMIT: {head}\n\n## Summary\n{summary}\n"
                                   f"## Output (tail)\n```\n{tail}\n```\n")

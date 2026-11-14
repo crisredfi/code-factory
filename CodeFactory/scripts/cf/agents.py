@@ -182,8 +182,49 @@ def catalog_block(cfg: dict) -> str:
     return "\n".join(lines)
 
 
+# Given to the builder in every phase that commits. The local model follows this literally.
+LOCAL_FIX = (
+    "\n\nLOCAL TOOL STATE: the folders `.claude/`, `.build/`, `DerivedData/`, `.swiftpm/` and the file `.DS_Store` "
+    "must NOT be in any commit. You do not remove them: the factory does that before the gate. Never run `git rm`, "
+    "`git reset` or `git commit --amend`, and never rewrite history."
+)
+
+
+def findings_round(st: dict) -> int | None:
+    """The latest earlier round that has findings (checks or reviews). Feedback and blocked rounds may have skipped
+    numbers, so 'the previous round' is not always there; this one is."""
+    if "job_id" not in st or not st.get("round"):
+        return None
+    jd = state.job_dir(st["job_id"])
+    for n in range(st["round"] - 1, 0, -1):
+        d = jd / f"round-{n}"
+        if d.exists() and (any(d.glob("checks.md")) or any(d.glob("review-*.md"))):
+            return n
+    return None
+
+
+def _findings_text(st: dict) -> str:
+    n = findings_round(st)
+    if n is None:
+        return "There are no findings files; act on the feedback-*.md files named in your prompt."
+    return f"The latest findings are in round-{n}/ (checks.md and review-*.md)."
+
+
+def coding_model(st: dict, cfg: dict, fallback: str) -> str:
+    """The model that writes code for this job: the hard one when intake rated the job HARD, else the default.
+    Without a `coding` section in the config, the fallback (the specialist's own model) is used."""
+    coding = cfg.get("coding")
+    if not coding:
+        return fallback
+    return coding["hard"] if st.get("difficulty") == "HARD" else coding["default"]
+
+
 def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list[dict]:
-    """Agent items for one stage key: intake | spec | build | review.<name>."""
+    """Agent items for one stage key: intake | spec | build | review.<name>.
+
+    The build stage is the orchestrator (factory-builder, on the build model). It plans, checks and commits.
+    The code itself is written by coders (specialists in subtasks, factory-coder in revise), on the coding model.
+    """
     if key.startswith("review."):
         name = key.split(".", 1)[1]
         rv = cfg["reviewers"]["catalog"][name]
@@ -196,11 +237,18 @@ def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list
             "plan": ("Phase: plan. Detect the layer of each acceptance criterion, decide the mode "
                      "(single | subtasks | split), and pick specialists only from the catalog below. Write "
                      "build/plan.json. For mode split, also write build/split.json and set build.md to "
-                     "STATUS: SPLIT.\n\n" + catalog_block(cfg)),
-            "integrate": ("Phase: integrate. Read build/subtasks/*.md, finish the work, commit, push, make sure the "
-                          "draft PR exists, and write build.md with STATUS: READY or BLOCKED."),
-            "revise": (f"Phase: revise. Read round-{st['round'] - 1}/checks.md and any review-*.md there and fix "
-                       "only what they ask. Commit, push, update build.md with STATUS: READY or BLOCKED."),
+                     "STATUS: SPLIT. You plan and check the work; you do not write product code.\n\n"
+                     + catalog_block(cfg)),
+            "integrate": ("Phase: integrate. Read build/subtasks/*.md and check the work against the acceptance "
+                          "criteria. Run the project's tests from the worktree. Do NOT write product code yourself: "
+                          "the coders do that. If the work is complete and the tests pass, commit. If it is not, "
+                          "write STATUS: BLOCKED with the reason. Do NOT push and do NOT open a PR: the factory does "
+                          "both after the gate and reviewers pass. Then write build.md with STATUS: READY or BLOCKED."
+                          + LOCAL_FIX),
+            "revise": (f"Phase: revise-commit. The coder changed the code for this round (see build/revise-code.md). "
+                       f"Check those changes against the findings: {_findings_text(st)} Run "
+                       "the tests. Do NOT write product code yourself. If the fix is complete, commit. Do NOT push and "
+                       "do NOT open a PR. Then write build.md with STATUS: READY or BLOCKED." + LOCAL_FIX),
         }
         output = "build/plan.json" if phase == "plan" else "build.md"
         return [{"agent": stage["agent"], "model": stage["model"], "tag": f"build-{phase}", "stage": "build",
@@ -209,9 +257,21 @@ def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list
              "output": {"intake": "intake.md", "spec": "spec.md"}[key], "extra": ""}]
 
 
-def subtask_items(plan: dict, wave: list[dict], cfg: dict) -> list[dict]:
+def coder_items(st: dict, cfg: dict) -> list[dict]:
+    """The revise coder: writes the code that the round's checks and reviews ask for. Runs on the coding model."""
+    fallback = cfg["stages"]["build"]["model"]
+    return [{"agent": "factory-coder", "model": coding_model(st, cfg, fallback), "tag": "revise-code",
+             "stage": "specialists", "output": "build/revise-code.md",
+             "extra": (f"Phase: revise. {_findings_text(st)} Read the feedback-*.md files too: a human's instructions win. "
+                       "Fix what the findings ask and nothing else. Edit the code in the worktree. Do NOT commit, push or open a PR: the "
+                       "orchestrator does that. Then write build/revise-code.md: one line per file you changed, saying "
+                       "what changed, and the test command you ran.")}]
+
+
+def subtask_items(plan: dict, wave: list[dict], cfg: dict, st: dict) -> list[dict]:
     return [{
-        "agent": s["specialist"], "model": cfg["agents"]["catalog"][s["specialist"]]["model"],
+        "agent": s["specialist"],
+        "model": coding_model(st, cfg, cfg["agents"]["catalog"][s["specialist"]]["model"]),
         "tag": f"sub-{s['id']}", "stage": "specialists", "output": f"build/subtasks/{s['id']}.md",
         "extra": "Your subtask (from build/plan.json):\n```json\n" + json.dumps(s, indent=2) + "\n```",
     } for s in wave]

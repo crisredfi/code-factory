@@ -126,6 +126,20 @@ def reject_job(st: dict, cfg: dict, reason: str, dry: bool = False) -> None:
     state.set_state(st, "REJECTED", "rejected: " + reason.strip()[:120])
 
 
+def hold_job(st: dict, held: bool) -> None:
+    """Take a queued job out of the queue (HELD) or put it back (QUEUED). Nothing is deleted, and sync keeps the
+    state, so a held job stays out of the queue until someone releases it."""
+    if held:
+        if st["state"] != "QUEUED":
+            raise FactoryError(f"{st['job_id']} is {st['state']}; only queued jobs can be held")
+        state.set_state(st, "HELD", "held: taken out of the queue")
+    else:
+        if st["state"] != "HELD":
+            raise FactoryError(f"{st['job_id']} is {st['state']}, not HELD")
+        state.set_state(st, "QUEUED", "released back to the queue")
+    state.render_board()
+
+
 def feedback_job(st: dict, cfg: dict, text: str) -> None:
     if st["state"] != "NEEDS_HUMAN":
         raise FactoryError(f"{st['job_id']} is {st['state']}, not NEEDS_HUMAN")

@@ -47,6 +47,7 @@ The header comes first, exactly in this shape, so the controller can read it:
 ```
 DECISION: ACCEPT | NEEDS-INFO | REJECT
 RISK: LOW | MEDIUM | HIGH
+DIFFICULTY: NORMAL | HARD
 SCOPE: small | medium | large
 REVIEWERS_ADD: none | ux, ui, security
 REVIEWERS_DROP: none | architecture
@@ -64,4 +65,8 @@ Then sections, in this order:
 - Never invent requirements. Label your own ideas as "suggestion".
 - Write the summary and questions for the issue's author: plain, short, polite. The factory posts them on the issue.
 - Do not modify the repository, and do not create GitHub issues or post comments yourself. The controller posts your Summary and Questions as the issue comment (see docs/COMMENTS.md).
+- DIFFICULTY: HARD when the change needs deep reasoning about existing code: concurrency, security-sensitive
+  logic, a non-obvious bug in a large module, a cross-cutting refactor, or a protocol or parser. NORMAL for
+  everything else, including ordinary features and small fixes. A HARD job is coded by a stronger model, so
+  do not mark a job HARD just because it is large.
 - When you are done, reply with one line: the `DECISION:` line.

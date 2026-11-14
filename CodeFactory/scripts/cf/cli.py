@@ -34,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     add("move", "move a queued job up or down", job, ("direction", {"choices": ["up", "down"]}))
     add("reviewers", "override a job's reviewer set", job, ("names", {"nargs": "*"}), ("--reset", {"action": "store_true"}))
     add("feedback", "send a needs-human job back to the builder (text on stdin)", job)
+    add("hold", "take a queued job out of the queue (it is not deleted)", job)
+    add("release", "put a held job back in the queue", job)
     add("reject", "reject a parked job (reason on stdin)", job)
     add("split", "approve or cancel a builder's sub-issue split", job, ("decision", {"choices": ["approve", "cancel"]}), dry)
     add("merge", "squash-merge a MERGE_PENDING job's PR", job, dry)
@@ -90,6 +92,12 @@ def run(args, cfg: dict) -> None:
     elif c == "reviewers":
         names = None if args.reset else args.names
         print("reviewers: " + ", ".join(lifecycle.set_reviewers(args.job, cfg, names)))
+    elif c == "hold":
+        lifecycle.hold_job(state.load_state(args.job), True)
+        print(f"{args.job}: held")
+    elif c == "release":
+        lifecycle.hold_job(state.load_state(args.job), False)
+        print(f"{args.job}: back in the queue")
     elif c == "feedback":
         lifecycle.feedback_job(state.load_state(args.job), cfg, sys.stdin.read())
         print(f"{args.job}: back to build")
