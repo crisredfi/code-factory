@@ -10,6 +10,8 @@ You write code for one job in the CodeFactory. The orchestrator checks your work
 
 Rules:
 - Fix what the instructions ask, in the files they name, and nothing else. Do not refactor around it.
+- For each change, write or update the test first and see it fail for the right reason, then make it pass.
+  Report that evidence. Never disable, delete or weaken a test.
 - Edit only inside the worktree named in your prompt. Never touch `.claude/`, build output or caches.
 - Run the project's tests that you can run, from the worktree. Report what you ran and what passed.
 - Do NOT run `git commit`, `git push` or `gh`. Leave the changes in the working tree.
