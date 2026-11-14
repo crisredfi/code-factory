@@ -13,7 +13,12 @@ def apply(job_id: str, cfg: dict) -> tuple[str, str]:
     decider = decide.DECIDERS.get(st["state"])
     if decider is None:
         raise FactoryError(f"nothing to advance from {st['state']}")
-    to, note = decider(st, cfg)
+    try:
+        to, note = decider(st, cfg)
+    except FactoryError:
+        # The output this stage produced is not valid: its agents run again on the next attempt.
+        _forget_stage(job_id)
+        raise
     if to == "MERGE_PENDING":
         # Gate and every reviewer passed: the flow pushes and opens the PR. A failure here leaves the job
         # where it was, so the next tick retries it.
@@ -31,6 +36,15 @@ def apply(job_id: str, cfg: dict) -> tuple[str, str]:
         return "COMPLETE", f"auto-merged {url}"
     state.set_state(st, to, note)
     return to, note
+
+
+def _forget_stage(job_id: str) -> None:
+    st = state.load_state(job_id)
+    prefix = f"{st['state']}|{st.get('phase')}|{st.get('round')}|"
+    kept = [k for k in st.get("done", []) if not k.startswith(prefix)]
+    if len(kept) != len(st.get("done", [])):
+        st["done"] = kept
+        state.save_state(st)
 
 
 def step_build(job_id: str, cfg: dict, dry: bool, out) -> None:
@@ -51,6 +65,7 @@ def step_build(job_id: str, cfg: dict, dry: bool, out) -> None:
             agents.execute(job_id, agents.subtask_items(plan, wave, cfg), cfg, dry, out)
         if dry:
             return
+        st = state.load_state(job_id)  # the subtask runs recorded their markers on disk; keep them
         st["phase"] = "integrate"
         state.save_state(st)
     st = state.load_state(job_id)

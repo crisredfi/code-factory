@@ -60,15 +60,16 @@ def attempts(st: dict) -> dict:
         g = _gate_of(st, n)
         if g:
             verdict, detail = g
-            out["Gate"].append({"round": n, "status": "done" if verdict == "PASS" else "failed",
+            out["Gate"].append({"round": n, "status": "done" if verdict == "PASS" else "failed", "verdict": verdict,
                                 "detail": detail or verdict.lower(), "file": f"round-{n}/checks.md"})
             out["Build"].append({"round": n, "status": "done", "detail": "built; gate ran", "file": "build.md"})
         rd = state.job_dir(st["job_id"]) / f"round-{n}"
         if rd.exists():
             for f in sorted(rd.glob("review-*.md")):
                 v = first_word(util.field(f.read_text(), "VERDICT"))
-                out["Review"].append({"round": n, "status": "done" if v == "PASS" else "failed",
-                                      "detail": f"{f.stem.removeprefix('review-')}: {v or 'no verdict'}",
+                name = f.stem.removeprefix("review-")
+                out["Review"].append({"round": n, "status": "done" if v == "PASS" else "failed", "verdict": v,
+                                      "name": name, "detail": f"{name}: {v or 'no verdict'}",
                                       "file": f"round-{n}/{f.name}"})
     for h in st.get("history", []):
         if h["note"].startswith("builder blocked"):
@@ -143,7 +144,44 @@ def progress(st: dict) -> dict:
         if not reason and st.get("history"):
             reason = st["history"][-1]["note"]
     reason = " ".join(reason.split())[:600]
-    return {"steps": steps, "reason": reason}
+    return {"steps": steps, "reason": reason, "rounds": _rounds(st, att)}
+
+
+def _review_default(n: int, current: int, here: bool, st: dict, gate) -> str:
+    """Reviewers only run after a PASS gate. A failed gate skips them; that is not a missing record."""
+    if gate and gate["verdict"] != "PASS":
+        return "skipped"
+    if n < current:
+        return "unknown"
+    return "running" if here and st["state"] == "REVIEW" and gate else "pending"
+
+
+def _rounds(st: dict, att: dict) -> list[dict]:
+    """One row per round, like the original factory's card: the build, the gate, then each reviewer.
+    A round's row stays as it was decided, so a failed round stays red after a retry passes."""
+    current = st.get("round") or 0
+    live = st["state"] in ACTIVE
+    rows = []
+    for n in range(1, current + 1):
+        gate = next((a for a in att["Gate"] if a["round"] == n), None)
+        reviews = {a["name"]: a["verdict"] for a in att["Review"] if a["round"] == n}
+        here = n == current and live  # this is the round the job is working on now
+        if gate:
+            build, gate_cell = "done", gate["verdict"]
+        elif here and st["state"] == "BUILD":
+            build, gate_cell = "running", "pending"
+        elif n < current:  # a later round exists, so this one was built; its gate file is no longer on disk
+            build, gate_cell = "done", "unknown"
+        else:
+            build, gate_cell = "pending", "pending"
+        rows.append({
+            "round": n,
+            "build": build,
+            "gate": gate_cell,
+            "reviews": {name: reviews.get(name, _review_default(n, current, here, st, gate))
+                        for name in st.get("reviewers", [])},
+        })
+    return rows
 
 
 def _web_url(url):
@@ -227,8 +265,7 @@ def api_state(cfg: dict) -> dict:
             "reviewers_always": cfg["reviewers"]["always"], "auto_merge": cfg["auto_merge"],
             "target_repo": cfg.get("target_repo", ""), "base_branch": cfg["github"]["base_branch"],
         },
-        "scheduler": {**queue.read_scheduler(), "enabled": cfg.get("scheduler", {}).get("enabled", True),
-                      "interval_s": cfg.get("scheduler", {}).get("interval_s", 300)},
+        "scheduler": scheduler_status(cfg),
         "catalog": {
             "reviewers": {k: v["description"] for k, v in cfg["reviewers"]["catalog"].items()},
             "specialists": {k: v["description"] for k, v in cfg["agents"]["catalog"].items()},
@@ -353,6 +390,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": f"unknown action {action}"}, 404)
         except (FactoryError, KeyError, ValueError) as e:
             self.send_json({"error": str(e)}, 400)
+
+
+def scheduler_status(cfg: dict) -> dict:
+    """What the tick panel shows: is a tick running, when the last one ran and what it did, and when the next is due."""
+    sc = queue.read_scheduler()
+    enabled = cfg.get("scheduler", {}).get("enabled", True)
+    next_at = sc.get("next_at") if enabled else None
+    overdue = False
+    if next_at:
+        try:
+            due = dt.datetime.fromisoformat(next_at.replace("Z", "+00:00"))
+            overdue = not queue.tick_running() and (dt.datetime.now(dt.timezone.utc) - due).total_seconds() > 90
+        except ValueError:
+            overdue = False
+    return {**sc, "enabled": enabled, "interval_s": cfg.get("scheduler", {}).get("interval_s", 300),
+            "next_at": next_at, "running": queue.tick_running(), "overdue": overdue}
 
 
 def _scheduler_loop(stop: threading.Event) -> None:

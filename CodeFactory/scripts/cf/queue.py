@@ -214,24 +214,44 @@ def iso_after(seconds: int) -> str:
     return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def tick_running() -> bool:
+    """True while another process holds the tick lock."""
+    lock_path = paths.INDEX.parent / "tick.lock"
+    if not lock_path.exists():
+        return False
+    with open(lock_path, "a") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(fh, fcntl.LOCK_UN)
+    return False
+
+
 def run_tick(cfg: dict, dry: bool = False, out=print) -> bool:
     """One tick under a file lock. Returns False (and runs nothing) when another tick holds the lock."""
     lock_path = paths.INDEX.parent / "tick.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w") as fh:
+    with open(lock_path, "a") as fh:
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             out("another tick is running; skipped")
             return False
+        lines = []
+
+        def log(msg):
+            lines.append(msg)
+            out(msg)
+
         try:
-            write_scheduler(last_at=util.now(), last_result="running")
+            write_scheduler(last_at=util.now(), last_result="running", last_lines=[])
             try:
-                tick(cfg, dry, out)
+                tick(cfg, dry, log)
             except Exception as e:
-                write_scheduler(last_result=f"error: {e}")
+                write_scheduler(last_result=f"error: {e}", last_lines=lines[-5:])
                 raise
-            write_scheduler(last_result="ok")
+            write_scheduler(last_result="ok", last_lines=lines[-5:] or ["nothing to do"])
         finally:
             fcntl.flock(fh, fcntl.LOCK_UN)
     return True
