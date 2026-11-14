@@ -97,8 +97,12 @@ def run_gate(st: dict, cfg: dict) -> str:
     except FactoryError as e:
         problems.append(str(e))
     head = git(wt, "rev-parse", "HEAD").strip()
-    if git(wt, "status", "--porcelain").strip():
-        problems.append("the worktree has uncommitted changes")
+    # Untracked local tool state (agent memory, Xcode workspace) is not uncommitted work: it is never committed.
+    patterns = cfg.get("local_state_paths", [])
+    dirty = [l for l in git(wt, "status", "--porcelain").splitlines()
+             if not (l.startswith("?? ") and is_local_state(l[3:].strip(), patterns))]
+    if dirty:
+        problems.append("the worktree has uncommitted changes: " + "; ".join(l[3:] for l in dirty[:5]))
     ahead = int(git(wt, "rev-list", "--count", f"origin/{base}..HEAD").strip() or 0)
     if ahead == 0:
         problems.append(f"{st['branch']} has no commits on top of origin/{base}")
