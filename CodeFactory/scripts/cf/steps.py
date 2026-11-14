@@ -1,7 +1,7 @@
 """Run a job's stage: call its agents, then apply the gate. This is what `step` and `tick` use."""
 from __future__ import annotations
 
-from . import agents, decide, lifecycle, reviewers, state
+from . import agents, decide, lifecycle, reviewers, state, watchdog
 from .decide import validate_plan
 from .util import FactoryError, waves
 
@@ -50,21 +50,31 @@ def step_build(job_id: str, cfg: dict, dry: bool, out) -> None:
 
 
 def step_job(job_id: str, cfg: dict, dry: bool = False, out=print) -> None:
+    """Run one job's current stage. If an agent stayed stuck through every retry, the job waits for a human."""
     with state.job_lock(job_id):
-        st = state.load_state(job_id)
-        s = st["state"]
-        if s == "BUILD":
-            step_build(job_id, cfg, dry, out)
-            return
-        if s in {"INTAKE", "SPEC"}:
-            agents.execute(job_id, agents.stage_items(s.lower(), cfg, st), cfg, dry, out)
-        elif s == "REVIEW":
-            items = [it for n in reviewers.review_names(st, cfg) for it in agents.stage_items(f"review.{n}", cfg, st)]
-            agents.execute(job_id, items, cfg, dry, out)
-        else:
-            out(f"{job_id}: nothing to run in {s}")
-            return
-        if dry:
-            return
-        to, note = apply(job_id, cfg)
-        out(f"{job_id}: {s} -> {to} ({note})")
+        try:
+            _run_stage(job_id, cfg, dry, out)
+        except watchdog.StuckAgent as e:
+            st = state.load_state(job_id)
+            state.set_state(st, "NEEDS_HUMAN", f"self-heal gave up: {e}")
+            out(f"{job_id}: NEEDS_HUMAN (self-heal gave up: {e})")
+
+
+def _run_stage(job_id: str, cfg: dict, dry: bool, out) -> None:
+    st = state.load_state(job_id)
+    s = st["state"]
+    if s == "BUILD":
+        step_build(job_id, cfg, dry, out)
+        return
+    if s in {"INTAKE", "SPEC"}:
+        agents.execute(job_id, agents.stage_items(s.lower(), cfg, st), cfg, dry, out)
+    elif s == "REVIEW":
+        items = [it for n in reviewers.review_names(st, cfg) for it in agents.stage_items(f"review.{n}", cfg, st)]
+        agents.execute(job_id, items, cfg, dry, out)
+    else:
+        out(f"{job_id}: nothing to run in {s}")
+        return
+    if dry:
+        return
+    to, note = apply(job_id, cfg)
+    out(f"{job_id}: {s} -> {to} ({note})")

@@ -5,7 +5,7 @@ import json
 import shutil
 from pathlib import Path
 
-from . import state
+from . import models, state
 from .model import ACTIVE, COLUMNS, PRIORITIES
 from .util import waves
 
@@ -21,6 +21,31 @@ def status(cfg: dict) -> str:
         out.append(f"{col} ({len(cards)})")
         out += [f"  [{r['priority']}] {r['job_id']}  {r['title']}" for r in cards]
     state.render_board()
+    return "\n".join(out)
+
+
+def models_list(cfg: dict) -> str:
+    out = ["Claude models (models.claude in the config):"]
+    out += [f"  {m}" for m in cfg["models"]["claude"]]
+    out += ["", "Local models (LM Studio, `lms ls`):"]
+    try:
+        lm = models.LMStudio(cfg)
+        loaded = {m.get("modelKey") for m in lm.loaded()} | {m.get("identifier") for m in lm.loaded()}
+        out += [f"  local:{k}" + ("   (loaded now)" if k in loaded else "") for k in lm.installed()]
+    except FactoryError as e:
+        out.append(f"  unavailable: {e}")
+    out += ["", "Set them for a run:  factory.py profile set build=local:<key> review=<claude-model> ..."]
+    return "\n".join(out)
+
+
+def profile(cfg: dict) -> str:
+    prof = models.load_profile()
+    if not prof.get("stages"):
+        head = "no run profile: every stage uses the models in the config"
+    else:
+        head = f"run profile (set {prof.get('updated_at', '?')}):"
+    out = [head, ""]
+    out += [f"  {stage:<20} {spec}" for stage, spec in models.table(prof, cfg)]
     return "\n".join(out)
 
 
@@ -66,6 +91,11 @@ def doctor(cfg: dict) -> str:
     for name in cfg["agents"]["catalog"]:
         check(f"specialist {name}", (paths.AGENTS / f"{name}.md").exists())
     check("gh on PATH", shutil.which("gh") is not None)
+    chosen = [s for s in models.load_profile().get("stages", {}).values() if models.is_local(s)]
+    if chosen:
+        check("lms on PATH (run profile uses local models)", shutil.which(cfg["models"]["local"]["command"]) is not None)
+        lm = models.LMStudio(cfg)
+        check("LM Studio server answers", lm.healthy(), lm.base)
     check("runner on PATH", shutil.which(cfg["runner"]["command"]) is not None, cfg["runner"]["command"])
     check("target_repo set", bool(cfg.get("target_repo")), cfg.get("target_repo") or "empty")
     if cfg.get("target_repo"):

@@ -5,6 +5,8 @@
 CodeFactory/jobs/*
 !CodeFactory/jobs/.gitkeep
 CodeFactory/queue/queue.json
+CodeFactory/queue/run-profile.json
+CodeFactory/queue/lmstudio.lock
 CodeFactory/BOARD.md
 CodeFactory/.worktrees/
 **/.worktrees/

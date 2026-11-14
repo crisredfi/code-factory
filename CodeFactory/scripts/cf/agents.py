@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import json
+import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
 
-from . import paths, state, util
+from . import models, paths, state, util, watchdog
 from .util import FactoryError
 
 
@@ -48,30 +48,70 @@ def build_prompt(st: dict, cfg: dict, agent: str, output_rel: str, extra: str = 
     return "\n".join(lines) + "\n"
 
 
-def run_agent(prompt: str, model: str, cwd, log: Path, cfg: dict, dry: bool) -> str:
+def run_agent(prompt: str, model: str, cwd, log: Path, cfg: dict, dry: bool,
+              env: dict | None = None, watch: dict | None = None) -> str:
+    """Run one `claude -p` agent. Raises watchdog.Stuck if the watchdog killed it for making no progress."""
     cmd = [cfg["runner"]["command"], "-p", "--model", model, *cfg["runner"].get("extra_args", [])]
     if dry:
         return f"DRY RUN: {' '.join(cmd)} (prompt {len(prompt)} chars, cwd {cwd or '.'})"
     if not shutil.which(cmd[0]):
         raise FactoryError(f"runner not found on PATH: {cmd[0]}")
-    res = subprocess.run(cmd, input=prompt, cwd=cwd, capture_output=True, text=True)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text(f"$ {' '.join(cmd)}\nexit={res.returncode}\n--- stdout ---\n{res.stdout}\n"
-                   f"--- stderr ---\n{res.stderr}\n")
-    if res.returncode != 0:
-        raise FactoryError(f"agent exited {res.returncode}, see {log}")
+    code, _out = watchdog.run_watched(cmd, prompt, cwd, env or dict(os.environ), log, cfg["self_heal"],
+                                      **(watch or {}))
+    if code != 0:
+        raise FactoryError(f"agent exited {code}, see {log}")
     return f"ok, log {log.name}"
 
 
+def _run_stage_once(job_id: str, it: dict, spec: str, prompt: str, cwd, log: Path, cfg: dict, dry: bool,
+                    out) -> str:
+    """One attempt. A local model is loaded (and the LM Studio lock held) before its agent runs."""
+    watch = {"worktree": cwd and str(cwd), "job_dir": state.job_dir(job_id)}
+    if dry or not models.is_local(spec):
+        return run_agent(prompt, spec, cwd, log, cfg, dry, watch=watch)
+    with models.local_turn(cfg, spec, log=lambda msg: out(f"  {it['tag']}: {msg}")) as lm:
+        watch |= {"local": True, "local_up": lm.healthy}
+        return run_agent(prompt, models.local_key(spec), cwd, log, cfg, dry,
+                         env=lm.child_env(dict(os.environ)), watch=watch)
+
+
+def _note_heal(job_id: str, text: str) -> None:
+    """Keep every stuck attempt in the job's log folder, so a human can read what happened."""
+    d = state.job_dir(job_id) / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    with open(d / "self-heal.log", "a") as fh:
+        fh.write(f"{util.now()} {text}\n")
+
+
 def execute(job_id: str, items: list[dict], cfg: dict, dry: bool, out=print) -> None:
-    """Run agent items in parallel, up to max_parallel_subtasks at a time."""
+    """Run agent items in parallel, up to max_parallel_subtasks at a time.
+
+    Each item's model comes from the run profile (models.py), or from the config when the profile does not
+    name its stage. A run the watchdog kills is retried, on the fallback model when one is set, up to
+    self_heal.max_retries times. After that it raises StuckAgent.
+    """
     st = state.load_state(job_id)
     cwd = st.get("worktree") or cfg.get("target_repo") or None
+    profile = models.load_profile()
+    heal = cfg["self_heal"]
+    attempts = 1 + (heal["max_retries"] if heal["enabled"] else 0)
 
     def one(it: dict):
-        prompt = build_prompt(st, cfg, it["agent"], it["output"], it.get("extra", ""))
-        log = state.job_dir(job_id) / "logs" / f"{it['tag']}-{util.stamp()}.log"
-        return it["tag"], run_agent(prompt, it["model"], cwd, log, cfg, dry)
+        stage = it.get("stage", it["tag"])
+        for attempt in range(1, attempts + 1):
+            spec = it["model"] if it.get("pinned") else models.resolve(profile, stage, it["model"])
+            if attempt > 1 and heal.get("fallback_model"):
+                spec = heal["fallback_model"]
+            prompt = build_prompt(st, cfg, it["agent"], it["output"], it.get("extra", ""))
+            log = state.job_dir(job_id) / "logs" / f"{it['tag']}-{util.stamp()}.log"
+            try:
+                return it["tag"], _run_stage_once(job_id, it, spec, prompt, cwd, log, cfg, dry, out)
+            except watchdog.Stuck as e:
+                _note_heal(job_id, f"{it['tag']} attempt {attempt} on {spec}: {e}")
+                out(f"  {it['tag']}: stuck on attempt {attempt} ({spec}): {e}")
+                if attempt == attempts:
+                    raise watchdog.StuckAgent(f"{it['tag']} stuck after {attempt} attempt(s) on {spec}: {e}")
+        raise AssertionError("unreachable")
 
     with cf.ThreadPoolExecutor(max_workers=max(1, cfg["max_parallel_subtasks"])) as ex:
         for fut in cf.as_completed([ex.submit(one, it) for it in items]):
@@ -84,7 +124,7 @@ def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list
     if key.startswith("review."):
         name = key.split(".", 1)[1]
         rv = cfg["reviewers"]["catalog"][name]
-        return [{"agent": rv["agent"], "model": rv["model"], "tag": f"review-{name}",
+        return [{"agent": rv["agent"], "model": rv["model"], "tag": f"review-{name}", "stage": key,
                  "output": f"round-{st['round']}/review-{name}.md",
                  "extra": f"Review round {st['round']}. Read round-{st['round']}/checks.md first."}]
     stage = cfg["stages"][key]
@@ -99,15 +139,15 @@ def stage_items(key: str, cfg: dict, st: dict, phase: str | None = None) -> list
                        "only what they ask. Commit, push, update build.md with STATUS: READY or BLOCKED."),
         }
         output = "build/plan.json" if phase == "plan" else "build.md"
-        return [{"agent": stage["agent"], "model": stage["model"], "tag": f"build-{phase}",
+        return [{"agent": stage["agent"], "model": stage["model"], "tag": f"build-{phase}", "stage": "build",
                  "output": output, "extra": notes[phase]}]
-    return [{"agent": stage["agent"], "model": stage["model"], "tag": key,
+    return [{"agent": stage["agent"], "model": stage["model"], "tag": key, "stage": key,
              "output": {"intake": "intake.md", "spec": "spec.md"}[key], "extra": ""}]
 
 
 def subtask_items(plan: dict, wave: list[dict], cfg: dict) -> list[dict]:
     return [{
         "agent": s["specialist"], "model": cfg["agents"]["catalog"][s["specialist"]]["model"],
-        "tag": f"sub-{s['id']}", "output": f"build/subtasks/{s['id']}.md",
+        "tag": f"sub-{s['id']}", "stage": "specialists", "output": f"build/subtasks/{s['id']}.md",
         "extra": "Your subtask (from build/plan.json):\n```json\n" + json.dumps(s, indent=2) + "\n```",
     } for s in wave]

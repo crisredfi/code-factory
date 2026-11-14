@@ -24,13 +24,63 @@ says why. Fix the cause, or tell the human.
 ## Modes
 
 ```
-/factory run              drain the queue: sync, then tick until nothing is active or running
+/factory run              choose the models for this run (walkthrough below), then drain the queue:
+                          sync, then tick until nothing is active or running
 /factory run <n>          run one issue to its next parked state (needs-human, needs-info, merge-pending, …)
 /factory <anything else>  talk to the factory: status, a question, feedback, reject, reviewers,
                           priority, settings, or a new feature
 ```
 
 If the user's words do not clearly match one of these, ask which job they mean before acting.
+
+## The master session
+
+The session this skill runs in is the master. It runs on the model the human selected for it, and that
+model orchestrates the run. Never ask about it, never change it, and never write it into a run profile.
+The factory has no stage for it, so `profile set` refuses any stage name that is not a stage of the pipeline.
+
+## Model walkthrough (every /factory run)
+
+Before `tick`, let the human choose which model each stage runs on. This is the only place the run's
+models are chosen. Do it in this order:
+
+1. Run `models`. It lists the Claude models in the config and the local models installed in LM Studio, and
+   marks the local models that are loaded now. Do not paste the whole output; summarise the choices.
+2. Ask with AskUserQuestion: **"Use the config's models for this run, or choose per stage?"**
+   - Config's models (recommended): run `profile clear`, then go to step 5.
+   - Choose per stage: go to step 3.
+3. Ask one AskUserQuestion per group, in this order. Offer up to four options from the `models` output; the
+   human can type any other key under "Other".
+   - **Build** (`build`): the builder's plan, integrate and revise phases.
+   - **Specialists** (`specialists`): the subtasks the builder launches.
+   - **Review** (`review`): every reviewer. A single reviewer can be chosen as `review.<name>`, if the human asks.
+   - **Intake and spec** (`intake`, `spec`): the first two stages. Ask about them as one question, or as two if
+     the human wants them separate.
+4. Show the result with `profile show` and ask one more question: **"Start the run with this?"** If the human
+   changes something, set it again.
+5. Save the choices with `profile set`, one `stage=model` per argument. Use the exact keys from `models`,
+   for example `build=local:qwen3.6-35b-a3b-splash review=claude-opus-5-5`. Then continue with `/factory run`.
+
+A local model is a model in LM Studio. It is written `local:<key>`, and the key must be the one `models`
+shows. `profile set` checks that the model is installed and refuses it otherwise.
+
+**What the run does with local models.** Before a stage runs on a local model, the controller checks what LM
+Studio has loaded. If the wanted model is already loaded, it keeps it. Otherwise it unloads every other loaded
+model and then loads the wanted one. A Claude stage does not touch LM Studio. Local stages run one at a time,
+because only one model is loaded at a time. Say so to the human when they pick more than one local model.
+
+## Self-healing
+
+The controller watches every running agent. An agent counts as progressing while its processes use CPU, or its
+worktree or job folder changes. When nothing moves for `self_heal.stuck_after_s` (`local_stuck_after_s` for a
+local model), the watchdog marks the run SUSPECT. If the silence lasts another `self_heal.confirm_s`, the run is
+STUCK. The controller kills it and retries it, on `self_heal.fallback_model` if one is set, up to
+`self_heal.max_retries` times. Every stuck attempt is recorded in the job's `logs/self-heal.log`.
+
+- A tick that reports `stuck on attempt N` is progress, not an error. Report it as one line and carry on.
+- When every attempt is stuck, the job goes to NEEDS_HUMAN with the note `self-heal gave up`. Read
+  `logs/self-heal.log` and tell the human what was tried. Their options are `feedback`, `set`, or `reject`.
+- Never kill an agent process or delete a `.lock` yourself. The watchdog is the only thing that stops an agent.
 
 ## Pipeline
 
@@ -98,6 +148,12 @@ python3 CodeFactory/scripts/factory.py prioritize issue-<n> P0              # P0
 python3 CodeFactory/scripts/factory.py move issue-<n> up|down               # queue order
 python3 CodeFactory/scripts/factory.py set issue-<n> <STATE> --note "…"     # validated move; --force only when asked
 
+# models for a run
+python3 CodeFactory/scripts/factory.py models                              # Claude models and local models in LM Studio
+python3 CodeFactory/scripts/factory.py profile show                        # each stage and the model it runs on now
+python3 CodeFactory/scripts/factory.py profile set build=local:<key> review=claude-opus-5-5
+python3 CodeFactory/scripts/factory.py profile clear                       # back to the config's models
+
 # settings
 python3 CodeFactory/scripts/factory.py config get
 python3 CodeFactory/scripts/factory.py config set max_parallel_jobs 3
@@ -113,7 +169,10 @@ words exactly as they wrote them.
 
 ## /factory run
 
+0. The model walkthrough above. A run without it uses the config's models.
 1. `doctor`. If it reports a FAIL, stop and tell the human the line and its fix (INSTALL.md, step 7).
+   When the run profile uses local models, doctor also checks that `lms` is on the PATH and that the LM Studio
+   server answers.
 2. `sync`. Report what was added, refreshed and resumed.
 3. `tick`. Report its output as one table: job, state before, state after, reason. The tick
    returns when its agents finish, which can take several minutes. Do not poll in a loop. Run `status`
@@ -235,6 +294,9 @@ Read the first lines of a file first. The stage writes its decision there, and t
 - Never change `factory/checks.sh` or `factory/config.json` in the target repository from the factory. They are protected, and the gate fails any branch that touches them.
 - Never put secrets, tokens or personal data in a command, a comment, or a file. If the human pastes one, say it should be rotated, and do not repeat it.
 - Never run agents yourself, in parallel or not. If the controller cannot run them, report why.
+- Never edit `queue/run-profile.json` or `queue/lmstudio.lock` by hand. Use `profile set` and `profile clear`.
+- Never load or unload a model in LM Studio yourself. The controller does it for each local stage.
+- Never change the master session's model, and never list it as a stage.
 
 ## Troubleshooting
 
@@ -251,6 +313,11 @@ Read the first lines of a file first. The stage writes its decision there, and t
 | `checks script missing` or `checks exited N` in `checks.md` | the gate failed | read the tail in `checks.md`; the job goes back to BUILD while rounds remain |
 | `comments.log` entries | a GitHub comment failed to post | say so; the move still happened. Check `gh auth status` |
 | `gh … failed` | the GitHub CLI failed | show the message; check `gh auth status` and the repo name in config |
+| `not installed in LM Studio: <key>` | `profile set` was given a local model that LM Studio does not have | run `models`, then set a key from its list |
+| `LM Studio CLI not found on PATH` | the run uses a local model and `lms` is missing | install LM Studio's CLI, or set `models.local.command` (the human decides) |
+| `LM Studio server answers` FAIL in `doctor` | the local server is not running | ask the human to start LM Studio's server, then run `doctor` again |
+| `stuck on attempt N` in a tick | the watchdog killed an agent that made no progress | a normal retry. Only report it, and check the log if it repeats |
+| `self-heal gave up` (NEEDS_HUMAN) | every attempt was stuck | read `logs/self-heal.log`, then ask the human for `feedback`, `set`, or `reject` |
 
 When a job is in an unexpected state that the table does not cover, show `show issue-<n>` to the human and ask
 what they want to do. Do not guess a transition.

@@ -5,7 +5,7 @@ import argparse
 import json
 import sys
 
-from . import api, config, lifecycle, queue, report, state, steps, agents, reviewers
+from . import api, config, lifecycle, models, queue, report, state, steps, agents, reviewers
 from .util import FactoryError, names_in
 
 
@@ -40,6 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
     add("set", "move a job to a state", job, ("state", {}), ("--note", {}), ("--force", {"action": "store_true"}))
     add("config", "read or change editable settings", ("action", {"choices": ["get", "set"]}),
         ("key", {"nargs": "?"}), ("value", {"nargs": "?"}))
+    add("models", "list the Claude models and the local models (LM Studio) a run can use")
+    add("profile", "show, set or clear which model each stage runs on for this run", ("action", {"choices": ["show", "set", "clear"]}),
+        ("pairs", {"nargs": "*", "metavar": "stage=model"}))
     add("serve", "dashboard and JSON API on 127.0.0.1", ("--port", {"type": int, "default": 8765}))
     add("doctor", "check config, agents, gh, runner and the checks script")
     return p
@@ -70,6 +73,7 @@ def run(args, cfg: dict) -> None:
         for it in items:
             if args.model:
                 it["model"] = args.model
+                it["pinned"] = True  # an explicit --model beats the run profile
         agents.execute(args.job, items, cfg, args.dry_run)
     elif c == "advance":
         to, note = steps.apply(args.job, cfg)
@@ -115,6 +119,19 @@ def run(args, cfg: dict) -> None:
             val = names_in(args.value) if args.key == "reviewers.defaults" else args.value
             config.set_value(cfg, args.key, val)
             print(f"{args.key} saved")
+    elif c == "models":
+        print(report.models_list(cfg))
+    elif c == "profile":
+        if args.action == "show":
+            print(report.profile(cfg))
+        elif args.action == "set":
+            if not args.pairs:
+                raise FactoryError("usage: profile set <stage>=<model> [<stage>=<model> ...]")
+            models.set_stages(args.pairs, cfg)
+            print(report.profile(cfg))
+        else:
+            models.clear_profile()
+            print("profile cleared: every stage uses the models in the config")
     elif c == "serve":
         api.serve(args.port)
     elif c == "doctor":
