@@ -139,5 +139,12 @@
   "auto_merge": {
     "enabled": false,
     "max_risk": "LOW"
-  }
+  },
+  "local_state_paths": [
+    ".claude/",
+    ".build/",
+    "DerivedData/",
+    ".swiftpm/",
+    ".DS_Store"
+  ]
 }

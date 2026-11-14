@@ -8,6 +8,19 @@ from . import state, util
 from .util import FactoryError
 
 
+def is_local_state(path: str, patterns: list[str]) -> bool:
+    """True for files a tool writes into the checkout (agent memory, build output, Finder metadata).
+    A pattern ending in "/" matches a folder anywhere in the path; any other pattern matches a file name."""
+    name = path.rsplit("/", 1)[-1]
+    for p in patterns:
+        if p.endswith("/"):
+            if f"/{p}" in f"/{path}":
+                return True
+        elif name == p or path == p:
+            return True
+    return False
+
+
 def target(cfg: dict) -> Path:
     if not cfg.get("target_repo"):
         raise FactoryError("set target_repo in factory.config.json first")
@@ -53,6 +66,9 @@ def run_gate(st: dict, cfg: dict) -> str:
                if any(f == p or f.startswith(p.rstrip("/") + "/") for p in cfg["protected_paths"])]
     if touched:
         problems.append("touches protected paths: " + ", ".join(touched))
+    local_state = [f for f in changed if is_local_state(f, cfg.get("local_state_paths", []))]
+    if local_state:
+        problems.append("commits local tool state, remove it from the commit: " + ", ".join(local_state))
     checks = target(cfg) / cfg["checks_command"]
     output = ""
     if not checks.exists():
