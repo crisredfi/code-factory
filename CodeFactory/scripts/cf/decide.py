@@ -5,6 +5,8 @@ Deciders may write files (worktrees, gate results), and they raise FactoryError 
 """
 from __future__ import annotations
 
+import time
+
 import re
 from pathlib import Path
 
@@ -102,6 +104,26 @@ def is_environment_block(text: str) -> bool:
     return bool(ENVIRONMENT_BLOCK.search(text))
 
 
+def _revision_budget(st: dict, cfg: dict, stuck: bool) -> str | None:
+    """Why the job must stop instead of going back to build, or None. Stops a job after
+    `max_stuck_rounds` blocked or failed builds in a row, and every job after `max_revisions_per_day`
+    builder rounds in one UTC day (a runaway retry loop used the whole session budget on 2026-11-25)."""
+    if stuck and st.get("stuck_streak", 0) >= cfg.get("max_stuck_rounds", 2):
+        return f"stopped after {st.get('stuck_streak', 0)} blocked or failed builds in a row: a human decides"
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    used = 0
+    for other in state.all_states():
+        for h in other.get("history", []):
+            if str(h.get("at", "")).startswith(today) and any(k in h.get("note", "") for k in REVISION_NOTES):
+                used += 1
+    if used >= cfg.get("max_revisions_per_day", 25):
+        return f"daily revision limit reached ({used} builder rounds today): stopped until tomorrow or a human decides"
+    return None
+
+
+REVISION_NOTES = ("builder resumed", "sent back to the coder", "gate FAIL")
+
+
 def _blocked(st: dict, cfg: dict, reason: str) -> tuple[str, str]:
     """A BLOCKED build. Environment problems need a human. Anything else becomes findings for the next coder round,
     written to round-N/checks.md, so the coder reads the block the same way it reads a failed gate."""
@@ -110,6 +132,10 @@ def _blocked(st: dict, cfg: dict, reason: str) -> tuple[str, str]:
         return "NEEDS_HUMAN", "builder blocked by the session (a human must allow the command): " + reason[:200]
     if st["round"] >= st["round_limit"]:
         return "NEEDS_HUMAN", "builder blocked in the last allowed round: " + reason[:200]
+    st["stuck_streak"] = st.get("stuck_streak", 0) + 1
+    stop = _revision_budget(st, cfg, stuck=True)
+    if stop:
+        return "NEEDS_HUMAN", stop + ". Last block: " + reason[:160]
     rd = state.job_dir(st["job_id"]) / f"round-{st['round']}"
     rd.mkdir(parents=True, exist_ok=True)
     (rd / "checks.md").write_text(f"GATE: FAIL\n\n## Summary\n- builder blocked: {reason[:800]}\n")
@@ -149,9 +175,14 @@ def decide_build(st: dict, cfg: dict) -> tuple[str, str]:
     st["gate"] = verdict
     if verdict == "PASS":
         st["phase"] = None
+        st["stuck_streak"] = 0
         return "REVIEW", f"gate PASS in round {st['round']}"
     if st["round"] >= st["round_limit"]:
         return "NEEDS_HUMAN", f"gate failed in round {st['round']}, the last allowed round"
+    st["stuck_streak"] = st.get("stuck_streak", 0) + 1
+    stop = _revision_budget(st, cfg, stuck=True)
+    if stop:
+        return "NEEDS_HUMAN", stop
     st["round"] += 1
     st["phase"] = "revise"
     return "BUILD", f"gate FAIL: builder resumed for round {st['round']}"
@@ -179,6 +210,9 @@ def decide_review(st: dict, cfg: dict) -> tuple[str, str]:
     if changes:
         if st["round"] >= st["round_limit"]:
             return "NEEDS_HUMAN", f"review rounds exhausted; outstanding CHANGES: {', '.join(changes)}"
+        stop = _revision_budget(st, cfg, stuck=False)
+        if stop:
+            return "NEEDS_HUMAN", stop
         st["round"] += 1
         st["phase"] = "revise"
         return "BUILD", f"changes requested by {', '.join(changes)}: builder resumed for round {st['round']}"
