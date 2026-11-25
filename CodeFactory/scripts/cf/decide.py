@@ -157,6 +157,9 @@ def decide_build(st: dict, cfg: dict) -> tuple[str, str]:
     return "BUILD", f"gate FAIL: builder resumed for round {st['round']}"
 
 
+VERDICT_ALIASES = {"CHANGES_REQUESTED": "CHANGES", "REQUEST_CHANGES": "CHANGES"}
+
+
 def decide_review(st: dict, cfg: dict) -> tuple[str, str]:
     verdicts = {}
     for name in reviewers.review_names(st, cfg):
@@ -164,6 +167,7 @@ def decide_review(st: dict, cfg: dict) -> tuple[str, str]:
         if not doc:
             raise FactoryError(f"missing round-{st['round']}/review-{name}.md")
         v, r = first_word(field(doc, "VERDICT")), first_word(field(doc, "RISK"))
+        v = VERDICT_ALIASES.get(v, v)  # reviewer prompts say CHANGES_REQUESTED; the state machine uses CHANGES
         if v not in REVIEW_VERDICTS or r not in RISKS:
             raise FactoryError(f"review-{name}.md needs 'VERDICT: PASS | CHANGES | BLOCK' and 'RISK: LOW | MEDIUM | HIGH'")
         verdicts[name] = (v, r)
