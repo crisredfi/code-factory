@@ -24,7 +24,10 @@ def apply(job_id: str, cfg: dict) -> tuple[str, str]:
         # where it was, so the next tick retries it.
         url = lifecycle.publish_pr(st, cfg)
         note = f"{note}; PR {url}"
-        if not cfg["auto_merge"]["enabled"]:
+        # Read the setting from disk now, not from the copy this process loaded at start: a long-running
+        # dashboard can hold an old config, and an automatic merge needs the current value.
+        from . import config as _config
+        if not _config.load()["auto_merge"]["enabled"]:
             state.set_state(st, to, note)
             return to, note
         state.set_state(st, to, note)

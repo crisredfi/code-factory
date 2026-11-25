@@ -28,7 +28,11 @@
     "command": "claude",
     "extra_args": [
       "--permission-mode",
-      "acceptEdits"
+      "acceptEdits",
+      "Bash(bash -n:*)",
+      "Bash(bash tests/imap:*)",
+      "Bash(make test-integration:*)",
+      "Bash(make perf:*)"
     ]
   },
   "models": {

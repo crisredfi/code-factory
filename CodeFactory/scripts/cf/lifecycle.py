@@ -148,6 +148,12 @@ def feedback_job(st: dict, cfg: dict, text: str) -> None:
     d = state.job_dir(st["job_id"])
     k = len(list(d.glob("feedback-*.md"))) + 1
     (d / f"feedback-{k}.md").write_text(f"# Feedback {k}\n\n{text.strip()}\n")
+    wt = st.get("worktree")
+    if not wt or not Path(wt).exists():
+        # Held before SPEC (e.g. intake rated the risk HIGH): there is no spec or worktree yet, so the
+        # approval goes through SPEC. Going straight to BUILD left the builder with nothing to build.
+        state.set_state(st, "SPEC", f"human approved before the spec (feedback {k} saved)")
+        return
     st["round"] += 1
     st["round_limit"] = st["round"] + cfg["max_rounds"]
     st["phase"] = "revise"
